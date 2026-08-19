@@ -1,0 +1,28 @@
+data:
+  colmap_dir: data/example/sparse/0
+  images_dir: data/example/images
+  downscale: 1
+
+model:
+  sh_degree: 3
+  initial_opacity: 0.1
+  initial_scale: 0.01
+
+training:
+  iterations: 30000
+  learning_rate_position: 0.00016
+  learning_rate_features: 0.0025
+  learning_rate_opacity: 0.05
+  learning_rate_scale: 0.005
+  learning_rate_rotation: 0.001
+  densify_from: 500
+  densify_until: 15000
+  densify_every: 100
+  seed: 42
+
+render:
+  backend: torch
+  background: [0.0, 0.0, 0.0]
+
+output_dir: outputs/baseline
+

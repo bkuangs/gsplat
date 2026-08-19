@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "learn-3d-gaussian-splatting"
+version = "0.1.0"
+description = "An educational, dual-backend implementation of 3D Gaussian Splatting"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { file = "LICENSE" }
+dependencies = [
+  "numpy>=1.26",
+  "pillow>=10.0",
+  "pyyaml>=6.0",
+  "torch>=2.3",
+]
+
+[project.optional-dependencies]
+data = ["pycolmap>=3.10"]
+cuda = ["gsplat>=1.5"]
+video = ["imageio[ffmpeg]>=2.35"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+]
+all = [
+  "pycolmap>=3.10",
+  "gsplat>=1.5",
+  "imageio[ffmpeg]>=2.35",
+]
+
+[project.scripts]
+gsplat-learn = "gaussian_splatting.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gaussian_splatting"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
