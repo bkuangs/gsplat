@@ -74,7 +74,7 @@ def project_points(
         [
             x_normalized,
             y_normalized,
-            torch.tensor(1.0, device=points_cam.device, dtype=points_cam.dtype),
+            torch.ones_like(x_normalized),
         ], dim=-1)
 
     # Apply intrinsics (multiply by K)
@@ -84,10 +84,31 @@ def project_points(
     return pixels, depth
 
 def project_covariance_2d(
-    means_camera: torch.Tensor,
+    means_camera: torch.Tensor,         # camera space point
     covariances_camera: torch.Tensor,
-    intrinsics: torch.Tensor,
+    intrinsics: torch.Tensor,           # focal length and principal point
 ) -> torch.Tensor:
     """Project 3D covariance through the local Jacobian of perspective projection."""
-    # TODO(student): derive J and evaluate J @ covariance @ J.T.
-    raise NotImplementedError("Milestone 1: implement covariance projection")
+
+    fx = intrinsics[0, 0]
+    fy = intrinsics[1, 1]
+
+    x = means_camera[:, 0]
+    y = means_camera[:, 1]
+    z = means_camera[:, 2]
+
+    zeros = torch.zeros_like(z)     # new tensor of 0s matching shape of z
+
+    # Use dim=-1 to stack input as COLUMNS rather than rows (i.e., our inputs become rows)
+    row_u = torch.stack(
+        [fx / z, zeros, -(fx * x) / z.square()],
+        dim=-1,
+    )
+    row_v = torch.stack(
+        [zeros, fy / z, -(fy * y) / z.square()],
+        dim=-1,
+    )
+
+    jacobian = torch.stack([row_u, row_v], dim=-2)
+    
+    return jacobian @ covariances_camera @ jacobian.transpose(-1, -2)
