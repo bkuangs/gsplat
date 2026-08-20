@@ -10,13 +10,14 @@ class CudaRasterizer(nn.Module):
 
     def __init__(self, sh_degree: int) -> None:
         super().__init__()
+        if sh_degree < 0:
+            raise ValueError("sh_degree must be non-negative")
         self.sh_degree = sh_degree
         try:
             from gsplat.rendering import rasterization
         except ImportError as error:
             raise RuntimeError(
-                "CUDA rendering requires an NVIDIA GPU and the cuda extra: "
-                "uv sync --extra cuda"
+                "CUDA rendering requires an NVIDIA GPU and the cuda extra: uv sync --extra cuda"
             ) from error
         self._rasterization = rasterization
 
@@ -52,4 +53,3 @@ class CudaRasterizer(nn.Module):
             alpha=alpha[0].permute(2, 0, 1),
             radii=metadata.get("radii"),
         )
-

@@ -1,14 +1,16 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch import nn
 from torch.optim import Optimizer
+
+from gaussian_splatting.model import GaussianModel
 
 
 def save_checkpoint(
     path: Path,
-    model: nn.Module,
+    model: GaussianModel,
     optimizer: Optimizer,
     step: int,
     metadata: dict[str, Any] | None = None,
@@ -27,14 +29,16 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: Path,
-    model: nn.Module,
-    optimizer: Optimizer | None = None,
-) -> tuple[int, dict[str, Any]]:
+    optimizer_factory: Callable[[GaussianModel], Optimizer] | None = None,
+    *,
+    device: torch.device | str = "cpu",
+) -> tuple[GaussianModel, Optimizer | None, int, dict[str, Any]]:
+    """Reconstruct the saved model before creating and restoring its optimizer."""
     if not path.is_file():
         raise FileNotFoundError(f"checkpoint does not exist: {path}")
-    payload = torch.load(path, map_location="cpu", weights_only=True)
-    model.load_state_dict(payload["model"])
+    payload = torch.load(path, map_location=device, weights_only=True)
+    model = GaussianModel.from_state_dict(payload["model"])
+    optimizer = optimizer_factory(model) if optimizer_factory is not None else None
     if optimizer is not None:
         optimizer.load_state_dict(payload["optimizer"])
-    return int(payload["step"]), dict(payload["metadata"])
-
+    return model, optimizer, int(payload["step"]), dict(payload["metadata"])

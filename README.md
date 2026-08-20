@@ -37,6 +37,15 @@ By completion, you should be able to:
 5. Validate a readable reference implementation against an optimized CUDA operator.
 6. Diagnose camera-convention, coordinate-system, visibility, and numerical-stability bugs.
 
+## Representation conventions
+
+- Quaternions use WXYZ component order throughout the model and both renderers; identity
+  is `[1, 0, 0, 0]`.
+- Both rasterizers receive an explicit active SH degree. Stored coefficient tensors may
+  contain additional bands, but renderers evaluate only the configured active degree.
+- Checkpoint loading reconstructs the saved model shape and device before creating and
+  restoring its optimizer.
+
 ## Setup
 
 Use Python 3.11 and [`uv`](https://docs.astral.sh/uv/):
@@ -136,4 +145,3 @@ Do not describe this only as “implemented 3DGS.” Preserve evidence:
 
 Those artifacts show graphics reasoning and experimental discipline better than a
 feature checklist.
-

@@ -2,7 +2,7 @@ import torch
 
 
 def covariance_3d(log_scales: torch.Tensor, quaternions: torch.Tensor) -> torch.Tensor:
-    """Build anisotropic 3D covariance matrices from scale and rotation."""
+    """Build anisotropic 3D covariance matrices from scale and WXYZ rotation."""
     # TODO(student): normalize quaternions and evaluate R @ S @ S.T @ R.T.
     raise NotImplementedError("Milestone 1: implement 3D covariance construction")
 
@@ -25,4 +25,3 @@ def project_covariance_2d(
     """Project 3D covariance through the local Jacobian of perspective projection."""
     # TODO(student): derive J and evaluate J @ covariance @ J.T.
     raise NotImplementedError("Milestone 1: implement covariance projection")
-
