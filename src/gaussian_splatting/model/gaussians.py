@@ -1,3 +1,4 @@
+import math
 from collections.abc import Mapping
 
 import torch
@@ -72,8 +73,51 @@ class GaussianModel(nn.Module):
         initial_scale: float,
     ) -> "GaussianModel":
         """Initialize Gaussian parameters from a COLMAP sparse point cloud."""
-        # TODO(student): use WXYZ identity rotations, stable inverse activations, and SH DC.
-        raise NotImplementedError("Milestone 2: initialize Gaussians from sparse points")
+        if points.ndim != 2 or points.shape[-1] != 3:
+            raise ValueError("points must have shape (N, 3)")
+        if colors.shape != points.shape:
+            raise ValueError("colors must have shape (N, 3)")
+        if not points.is_floating_point():
+            raise ValueError("points must be floating point")
+        if sh_degree < 0:
+            raise ValueError("sh_degree must be non-negative")
+        if not 0.0 < initial_opacity < 1.0:
+            raise ValueError("initial_opacity must be between 0 and 1")
+        if not math.isfinite(initial_scale) or initial_scale <= 0.0:
+            raise ValueError("initial_scale must be finite and positive")
+
+        count = points.shape[0]
+        means = points.detach().clone()     # .detach() -> stop gradient computation
+                                            # PyTorch treats the tensor as a fixed constant 
+                                            # rather than a variable with an upstream computational history
+
+        # Scales (size) s = (s_x, s_y​, s_z​)
+        # .full_like(a, b) -> create a new Tensor of (shape, datatype)
+        scales = torch.full_like(points, initial_scale)
+        log_scales = scales.log()
+
+        # Identity quaternions
+        quaternions = points.new_zeros((count, 4))
+        quaternions[:, 0] = 1.0
+
+        # Opacity alpha
+        # .new_full() -> create a new Tensor of (size, fill_value)
+        opacities = points.new_full((count, 1), initial_opacity)
+        opacity_logits = torch.logit(opacities)
+
+        # SH coefficients
+        coefficient_count = (sh_degree + 1) ** 2
+        sh_coefficients = points.new_zeros((count, coefficient_count, 3))
+        colors = colors.detach().to(device=points.device, dtype=points.dtype)
+        sh_coefficients[:, 0, :] = (colors - 0.5) / 0.28209479177387814
+
+        return cls(
+            means=means,
+            log_scales=log_scales,
+            quaternions=quaternions,
+            opacity_logits=opacity_logits,
+            sh_coefficients=sh_coefficients,
+        )
 
     @property
     def scales(self) -> torch.Tensor:

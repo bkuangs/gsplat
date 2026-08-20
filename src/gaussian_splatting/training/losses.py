@@ -6,7 +6,6 @@ def photometric_loss(
     target: torch.Tensor,
     ssim_weight: float = 0.2,
 ) -> torch.Tensor:
-    """Blend L1 and differentiable SSIM as used by 3DGS training."""
-    # TODO(student): implement L1 + SSIM and document image range assumptions.
+    """Compare encoded RGB tensors in CHW or BCHW layout against targets in [0, 1]."""
+    # TODO(student): implement L1 + SSIM without silently changing layout or color space.
     raise NotImplementedError("Milestone 3: implement the photometric objective")
-

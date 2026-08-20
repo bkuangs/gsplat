@@ -6,7 +6,12 @@ import torch
 
 @dataclass(frozen=True)
 class Camera:
-    """Pinhole camera using a world-to-camera transform."""
+    """One pinhole view at its target raster size.
+
+    ``world_to_camera`` maps homogeneous world-space column vectors into COLMAP/OpenCV
+    camera coordinates. ``width`` and ``height`` are the exact dimensions at which the
+    image must be loaded and rendered.
+    """
 
     world_to_camera: torch.Tensor
     intrinsics: torch.Tensor
@@ -36,8 +41,13 @@ class Camera:
 
 @dataclass(frozen=True)
 class RenderOutput:
+    """Unbatched render whose image tensors use channel-first layout.
+
+    ``rgb`` has shape ``(3, H, W)`` and uses the same encoded RGB scale as a normalized
+    training image. ``alpha`` and optional ``depth`` have shape ``(1, H, W)``.
+    """
+
     rgb: torch.Tensor
     alpha: torch.Tensor
     depth: torch.Tensor | None = None
     radii: torch.Tensor | None = None
-

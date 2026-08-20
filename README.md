@@ -46,6 +46,24 @@ By completion, you should be able to:
 - Checkpoint loading reconstructs the saved model shape and device before creating and
   restoring its optimizer.
 
+### Image and render tensor contract
+
+- Each `Camera` represents one unbatched image. Its `width` and `height` are the exact
+  target dimensions after applying the configured downscale.
+- The image loader converts source images to three-channel RGB, resizes them to
+  `(width, height)`, and returns contiguous `torch.float32` tensors with shape
+  `(3, height, width)` and values in `[0, 1]`.
+- Image values remain in their encoded RGB color space; loading does not apply gamma or
+  color-space conversion beyond conversion to RGB.
+- Both renderers return unbatched RGB with shape `(3, height, width)` and alpha with
+  shape `(1, height, width)`. Optional depth uses shape `(1, height, width)`.
+- Renderers use the model's floating-point dtype and device. Ground-truth images move
+  to that device before loss evaluation.
+- Renderer RGB is not silently clamped during training. Evaluation may clamp to
+  `[0, 1]` before computing display-oriented metrics.
+- HWC layout exists only at external-library boundaries; adapters convert it to CHW
+  before constructing `RenderOutput`.
+
 ## Setup
 
 Use Python 3.11 and [`uv`](https://docs.astral.sh/uv/):
