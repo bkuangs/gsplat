@@ -10,6 +10,7 @@ def _gaussian_kernel(
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor:
+    """Build the Gaussian convolution weights."""
     coordinates = torch.arange(kernel_size, dtype=dtype, device=device)
     coordinates -= (kernel_size - 1) / 2
 
@@ -26,7 +27,7 @@ def _gaussian_blur(
 ) -> torch.Tensor:
     unbatched = image.ndim == 3
     if unbatched:
-        image = image.unsqueeze(0)
+        image = image.unsqueeze(0)  # add batch dimension (BCHW) if not there
 
     padding = kernel.shape[-1] // 2
     image = F.pad(image, (padding, padding, padding, padding), mode="reflect")
@@ -42,17 +43,12 @@ def photometric_loss(
 ) -> torch.Tensor:
     """Compare encoded RGB tensors in CHW or BCHW layout against targets in [0, 1]."""
 
-    # 11 x 11 kernel size -> window size
-    # Sigma: Gaussian kernel assigns a weight to each neighboring pixel; Sigma controls 
-    #        how quickly those weights decrease as you move away from the center.
-    #
-    # We will use an isotropic sigma.
     c1 = 1e-4
     c2 = 9e-4
     kernel = _gaussian_kernel(
         channels=prediction.shape[-3],
-        kernel_size=11,
-        sigma=1.5,
+        kernel_size=11,                 # 11 x 11 window size
+        sigma=1.5,                      # how quickly weights decrease away from center
         dtype=prediction.dtype,
         device=prediction.device,
     )
