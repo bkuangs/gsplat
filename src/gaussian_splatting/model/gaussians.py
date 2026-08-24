@@ -89,7 +89,7 @@ class GaussianModel(nn.Module):
         count = points.shape[0]
         means = points.detach().clone()     # .detach() -> stop gradient computation
                                             # PyTorch treats the tensor as a fixed constant 
-                                            # rather than a variable with an upstream computational history
+                                            # rather than a variable with computational history
 
         # Scales (size) s = (s_x, s_y​, s_z​)
         # .full_like(a, b) -> create a new Tensor of (shape, datatype)
