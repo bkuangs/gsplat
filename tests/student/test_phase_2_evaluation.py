@@ -7,6 +7,7 @@ import pytest
 import torch
 from PIL import Image
 
+from gaussian_splatting import plotting
 from gaussian_splatting.config import (
     DataConfig,
     ExperimentConfig,
@@ -21,27 +22,48 @@ from gaussian_splatting.training.splits import partition_camera_indices
 from gaussian_splatting.types import Camera
 
 
-def _camera(image_id: int, image_path: Path) -> Camera:
+def _camera(
+    image_id: int,
+    image_path: Path,
+    width: int = 12,
+    height: int = 12,
+) -> Camera:
     return Camera(
         world_to_camera=torch.eye(4),
         intrinsics=torch.tensor(
             [[20.0, 0.0, 6.0], [0.0, 20.0, 6.0], [0.0, 0.0, 1.0]]
         ),
-        width=12,
-        height=12,
+        width=width,
+        height=height,
         image_path=image_path,
         image_id=image_id,
     )
 
 
-def _save_depth_samples(path: Path, image_name: str, depth: float = 2.0) -> None:
+def _save_depth_samples(
+    path: Path,
+    image_name: str,
+    depth: float = 2.0,
+    depths: np.ndarray | None = None,
+    coordinates: np.ndarray | None = None,
+) -> None:
+    sample_depths = (
+        depths
+        if depths is not None
+        else np.asarray([depth, depth], dtype=np.float64)
+    )
+    sample_coordinates = (
+        coordinates
+        if coordinates is not None
+        else np.asarray([[5.5, 5.5], [6.5, 6.5]], dtype=np.float64)
+    )
     torch.save(
         {
             "image_name": image_name,
-            "depth": np.asarray([depth, depth], dtype=np.float64),
-            "coord": np.asarray([[5.5, 5.5], [6.5, 6.5]], dtype=np.float64),
-            "error": np.zeros(2, dtype=np.float64),
-            "weight": np.ones(2, dtype=np.float64),
+            "depth": sample_depths,
+            "coord": sample_coordinates,
+            "error": np.zeros(len(sample_depths), dtype=np.float64),
+            "weight": np.ones(len(sample_depths), dtype=np.float64),
         },
         path,
     )
@@ -86,6 +108,51 @@ def test_sparse_depth_metrics_report_abs_rel_and_coverage(tmp_path: Path) -> Non
     assert metrics["depth_coverage"] == 1.0
     assert metrics["depth_samples"] == 2
     assert metrics["covered_depth_samples"] == 2
+
+
+def test_depth_sampling_uses_half_integer_pixel_centers() -> None:
+    image = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+    coordinates = torch.tensor([[0.5, 0.5], [2.5, 1.5], [3.5, 2.5]])
+
+    sampled = evaluation._sample_image_at_coordinates(
+        image,
+        coordinates,
+        source_width=4,
+        source_height=3,
+    )
+
+    assert sampled.tolist() == pytest.approx([0.0, 6.0, 11.0], abs=1e-6)
+
+
+def test_sparse_depth_metrics_map_source_coordinates_to_downscaled_render(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "image.png"
+    Image.new("RGB", (4, 4)).save(image_path)
+    depth_path = tmp_path / "image.pt"
+    _save_depth_samples(
+        depth_path,
+        image_path.name,
+        depths=np.asarray([1.0, 2.0, 3.0, 4.0], dtype=np.float64),
+        coordinates=np.asarray(
+            [[1.0, 1.0], [3.0, 1.0], [1.0, 3.0], [3.0, 3.0]],
+            dtype=np.float64,
+        ),
+    )
+    rendered_depth = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    alpha = torch.ones(2, 2)
+
+    metrics = evaluation.sparse_depth_metrics(
+        rendered_depth,
+        alpha,
+        _camera(1, image_path, width=2, height=2),
+        depth_path,
+    )
+
+    assert metrics["depth_abs_rel"] == pytest.approx(0.0)
+    assert metrics["depth_coverage"] == 1.0
+    assert metrics["depth_samples"] == 4
+    assert metrics["covered_depth_samples"] == 4
 
 
 def test_checkpoint_evaluation_writes_metrics_and_renders(
@@ -168,3 +235,62 @@ def test_checkpoint_evaluation_writes_metrics_and_renders(
         render_dir = checkpoint_path.parent / "evaluation" / "renders" / split
         assert (render_dir / f"image_{image_id:04d}_rgb.png").is_file()
         assert (render_dir / f"image_{image_id:04d}_depth.pt").is_file()
+
+
+def test_optional_metric_plot_omits_missing_values() -> None:
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    figure, axis = plt.subplots()
+    metrics = {
+        "splits": {
+            "train": {
+                "mean_lpips": 0.2,
+                "mean_depth_abs_rel": None,
+                "mean_depth_coverage": 0.8,
+            },
+            "test": {
+                "mean_lpips": None,
+                "mean_depth_abs_rel": 0.1,
+                "mean_depth_coverage": None,
+            },
+        }
+    }
+
+    plotting._plot_optional_metrics(axis, metrics)
+
+    assert sorted(patch.get_height() for patch in axis.patches) == [0.1, 0.2, 0.8]
+    assert [text.get_text() for text in axis.texts] == ["N/A", "N/A", "N/A"]
+    plt.close(figure)
+
+
+def test_plot_run_supports_custom_evaluation_directory(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    run_dir = tmp_path / "run"
+    evaluation_dir = tmp_path / "custom-evaluation"
+    run_dir.mkdir()
+    evaluation_dir.mkdir()
+    (run_dir / "training.jsonl").write_text(
+        '{"step": 1, "loss": 0.5, "gaussians": 10}\n',
+        encoding="utf-8",
+    )
+    metrics = {
+        "splits": {
+            split: {
+                "mean_psnr": 10.0,
+                "mean_lpips": None,
+                "mean_depth_abs_rel": None,
+                "mean_depth_coverage": None,
+            }
+            for split in ("train", "test")
+        }
+    }
+    (evaluation_dir / "metrics.json").write_text(
+        json.dumps(metrics),
+        encoding="utf-8",
+    )
+
+    output_path = plotting.plot_run(run_dir, evaluation_dir)
+
+    assert output_path == evaluation_dir / "summary.png"
+    assert output_path.is_file()

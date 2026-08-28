@@ -56,7 +56,7 @@ def _evaluate(args: argparse.Namespace) -> None:
 
 
 def _plot(args: argparse.Namespace) -> None:
-    print(plot_run(args.run_dir))
+    print(plot_run(args.run_dir, args.evaluation_dir))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,7 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("configs/baseline.yaml"),
     )
     evaluate_parser.add_argument("--checkpoint", type=Path)
-    evaluate_parser.add_argument("--output-dir", type=Path)
+    evaluate_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="write evaluation artifacts directly to this directory",
+    )
     evaluate_parser.set_defaults(handler=_evaluate)
 
     plot_parser = subparsers.add_parser(
@@ -97,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="plot training and evaluation metrics for one run",
     )
     plot_parser.add_argument("run_dir", type=Path)
+    plot_parser.add_argument(
+        "--evaluation-dir",
+        type=Path,
+        help="read metrics from and write the summary to a custom evaluation directory",
+    )
     plot_parser.set_defaults(handler=_plot)
     return parser
 

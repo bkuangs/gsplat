@@ -92,6 +92,7 @@ def _sample_image_at_coordinates(
     source_width: int,
     source_height: int,
 ) -> torch.Tensor:
+    """Sample using source-image coordinates whose pixel centers are half-integers."""
     normalized = torch.stack(
         [
             2.0 * coordinates[:, 0] / source_width - 1.0,
@@ -116,7 +117,7 @@ def sparse_depth_metrics(
     depth_path: Path,
     alpha_threshold: float = 1e-4,
 ) -> dict[str, float | int | None]:
-    """Compare rendered depth against sparse DTU depth samples."""
+    """Compare camera-space z against sparse samples in source-image coordinates."""
     if rendered_depth.shape != alpha.shape:
         raise ValueError("rendered depth and alpha must have matching shapes")
     if camera.image_path is None:

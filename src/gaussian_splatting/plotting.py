@@ -10,7 +10,42 @@ def _load_training_records(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in stream]
 
 
-def plot_run(run_dir: Path) -> Path:
+def _plot_optional_metrics(axis: Any, metrics: dict[str, Any]) -> None:
+    metric_names = ["mean_lpips", "mean_depth_abs_rel", "mean_depth_coverage"]
+    labels = ["LPIPS", "Depth AbsRel", "Depth coverage"]
+    x_positions = list(range(len(metric_names)))
+    width = 0.35
+    for offset, split, label in (
+        (-width / 2, "train", "Train"),
+        (width / 2, "test", "Test"),
+    ):
+        positions: list[float] = []
+        values: list[float] = []
+        for position, name in zip(x_positions, metric_names, strict=True):
+            value = metrics["splits"][split][name]
+            shifted_position = position + offset
+            if value is None:
+                axis.text(
+                    shifted_position,
+                    0.02,
+                    "N/A",
+                    ha="center",
+                    va="bottom",
+                    rotation=90,
+                    transform=axis.get_xaxis_transform(),
+                )
+            else:
+                positions.append(shifted_position)
+                values.append(value)
+        if values:
+            axis.bar(positions, values, width, label=label)
+    axis.set_xticks(x_positions, labels)
+    axis.set_title("Final perceptual and depth metrics")
+    if axis.get_legend_handles_labels()[0]:
+        axis.legend()
+
+
+def plot_run(run_dir: Path, evaluation_dir: Path | None = None) -> Path:
     """Plot the minimal Phase 2 training and evaluation summary."""
     try:
         import matplotlib
@@ -23,7 +58,8 @@ def plot_run(run_dir: Path) -> Path:
         ) from error
 
     records = _load_training_records(run_dir / "training.jsonl")
-    metrics_path = run_dir / "evaluation" / "metrics.json"
+    evaluation_dir = evaluation_dir or run_dir / "evaluation"
+    metrics_path = evaluation_dir / "metrics.json"
     if not metrics_path.is_file():
         raise FileNotFoundError(f"evaluation metrics do not exist: {metrics_path}")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -52,32 +88,10 @@ def plot_run(run_dir: Path) -> Path:
     axes[1, 0].set_title("Final rendering quality")
     axes[1, 0].set_ylabel("PSNR (dB)")
 
-    metric_names = ["mean_lpips", "mean_depth_abs_rel", "mean_depth_coverage"]
-    labels = ["LPIPS", "Depth AbsRel", "Depth coverage"]
-    x_positions = list(range(len(metric_names)))
-    width = 0.35
-    for offset, split, label in (
-        (-width / 2, "train", "Train"),
-        (width / 2, "test", "Test"),
-    ):
-        values = [
-            metrics["splits"][split][name]
-            if metrics["splits"][split][name] is not None
-            else 0.0
-            for name in metric_names
-        ]
-        axes[1, 1].bar(
-            [position + offset for position in x_positions],
-            values,
-            width,
-            label=label,
-        )
-    axes[1, 1].set_xticks(x_positions, labels)
-    axes[1, 1].set_title("Final perceptual and depth metrics")
-    axes[1, 1].legend()
+    _plot_optional_metrics(axes[1, 1], metrics)
 
     figure.tight_layout()
-    output_path = run_dir / "evaluation" / "summary.png"
+    output_path = evaluation_dir / "summary.png"
     figure.savefig(output_path, dpi=160)
     plt.close(figure)
     return output_path

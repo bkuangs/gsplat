@@ -125,6 +125,45 @@ uv run gsplat-learn plot outputs/dtu_scan63_holdout
 Evaluation writes per-camera JSON/CSV metrics and train/test RGB, alpha, and depth
 renders under `outputs/dtu_scan63_holdout/evaluation/`.
 
+To write evaluation artifacts elsewhere, pass the same directory to evaluation and
+plotting:
+
+```bash
+uv run gsplat-learn evaluate \
+  --config configs/dtu_scan63_holdout.yaml \
+  --output-dir outputs/dtu_scan63_custom_evaluation
+uv run gsplat-learn plot \
+  outputs/dtu_scan63_holdout \
+  --evaluation-dir outputs/dtu_scan63_custom_evaluation
+```
+
+### Sparse depth evaluation contract
+
+Set `data.depths_dir` to a directory containing one `<image-stem>.pt` file per test
+image. Each file is a mapping with:
+
+- `image_name`: the exact source-image basename, including its extension.
+- `depth`: a one-dimensional array of positive camera-space z values, in the same
+  units as the COLMAP reconstruction. These values are not Euclidean ray distances.
+- `coord`: an `(N, 2)` array of `(x, y)` coordinates in the original source image,
+  before `data.downscale` is applied. Pixel `[y, x]` has center
+  `(x + 0.5, y + 0.5)`.
+- `error` and `weight` may be present for compatibility with DTU preprocessing but
+  are not used by the evaluator.
+
+Coordinates are normalized using the original source-image dimensions before sampling
+the rendered depth and alpha maps. Therefore, for a rendered image of size
+`(render_width, render_height)`, rendered pixel `[y, x]` is centered at source
+coordinate `((x + 0.5) * source_width / render_width,
+(y + 0.5) * source_height / render_height)`. This preserves spatial alignment when
+evaluation renders are downscaled.
+
+Depth AbsRel includes only finite, positive ground-truth samples whose rendered depth
+is finite and positive and whose rendered alpha exceeds `1e-4`. Depth coverage is the
+fraction of valid ground-truth samples meeting those prediction conditions. Missing
+training-view depth files leave depth metrics unavailable; a missing test-view file is
+an error.
+
 ## Four-week path
 
 ### Week 1 — camera and image formation
