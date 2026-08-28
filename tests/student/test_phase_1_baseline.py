@@ -150,16 +150,18 @@ def test_cuda_backend_agrees_with_reference_on_tiny_scene() -> None:
     torch.testing.assert_close(
         cuda_output.rgb.cpu(), cpu_output.rgb, atol=0.15, rtol=0.15
     )
-    visible = (cuda_output.alpha > 1e-4) & (cpu_output.alpha > 1e-4)
+    visible = (cuda_output.alpha.cpu() > 1e-4) & (cpu_output.alpha > 1e-4)
     assert cuda_output.depth is not None and cpu_output.depth is not None
     torch.testing.assert_close(
-        cuda_output.depth.cpu()[visible.cpu()],
-        cpu_output.depth[visible.cpu()],
+        cuda_output.depth.cpu()[visible],
+        cpu_output.depth[visible],
         atol=0.1,
         rtol=0.05,
     )
     assert cuda_output.radii is not None and (cuda_output.radii > 0).any()
     cuda_output.rgb.sum().backward()
+    assert cuda_output.means_2d is not None and cuda_output.means_2d.grad is not None
+    assert torch.isfinite(cuda_output.means_2d.grad).all()
     assert all(
         parameter.grad is not None and torch.isfinite(parameter.grad).all()
         for parameter in cuda_model.parameters()

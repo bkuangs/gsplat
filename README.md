@@ -73,8 +73,9 @@ uv run gsplat-learn status
 uv run pytest
 ```
 
-On the NVIDIA training machine, install the optimized backend too. Follow the PyTorch
-installer for the CUDA build matching that machine before installing `gsplat`.
+On a Linux NVIDIA training machine, install the optimized backend too. The CUDA extra
+includes the compiler toolchain matching the pinned PyTorch build, so it does not use a
+possibly incompatible system `nvcc`.
 
 ```bash
 uv sync --extra dev --extra data --extra cuda --extra video
