@@ -10,6 +10,7 @@ class DataConfig:
     colmap_dir: Path
     images_dir: Path
     downscale: int = 1
+    holdout_image_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,7 +71,11 @@ def load_config(path: Path) -> ExperimentConfig:
         raise ValueError("configuration requires a data mapping")
 
     data_values = raw["data"]
-    _reject_unknown(data_values, {"colmap_dir", "images_dir", "downscale"}, "data")
+    _reject_unknown(
+        data_values,
+        {"colmap_dir", "images_dir", "downscale", "holdout_image_ids"},
+        "data",
+    )
     if "colmap_dir" not in data_values or "images_dir" not in data_values:
         raise ValueError("data requires colmap_dir and images_dir")
 
@@ -93,10 +98,18 @@ def load_config(path: Path) -> ExperimentConfig:
     if len(background) != 3:
         raise ValueError("render.background must have exactly three values")
 
+    holdout_values = data_values.get("holdout_image_ids", [])
+    if not isinstance(holdout_values, list):
+        raise ValueError("data.holdout_image_ids must be a list")
+    holdout_image_ids = tuple(int(value) for value in holdout_values)
+    if len(set(holdout_image_ids)) != len(holdout_image_ids):
+        raise ValueError("data.holdout_image_ids must not contain duplicates")
+
     data = DataConfig(
         colmap_dir=Path(data_values["colmap_dir"]),
         images_dir=Path(data_values["images_dir"]),
         downscale=int(data_values.get("downscale", 1)),
+        holdout_image_ids=holdout_image_ids,
     )
     if data.downscale < 1:
         raise ValueError("data.downscale must be at least 1")

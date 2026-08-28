@@ -91,6 +91,14 @@ uv run gsplat-learn inspect-colmap --config configs/baseline.yaml
 The `train` command supports both backends and records per-step loss and Gaussian count
 to `training.jsonl` in the configured output directory.
 
+To reserve fixed COLMAP cameras for a deterministic Phase 1 holdout, list their image
+IDs under `data.holdout_image_ids`. Training excludes those cameras and writes initial
+and final RGB, alpha, depth, and PSNR evidence under the run's `holdout/` directory:
+
+```bash
+uv run gsplat-learn train --config configs/dtu_scan63_holdout.yaml
+```
+
 ## Four-week path
 
 ### Week 1 — camera and image formation
