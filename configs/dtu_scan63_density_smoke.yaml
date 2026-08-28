@@ -1,0 +1,32 @@
+data:
+  colmap_dir: data/dtu/scan63/sparse/0
+  images_dir: data/dtu/scan63/images
+  downscale: 8
+
+model:
+  sh_degree: 3
+  initial_opacity: 0.1
+  initial_scale: 0.01
+
+training:
+  iterations: 20
+  learning_rate_position: 0.00016
+  learning_rate_features: 0.0025
+  learning_rate_opacity: 0.05
+  learning_rate_scale: 0.005
+  learning_rate_rotation: 0.001
+  densify_from: 20
+  densify_until: 20
+  densify_every: 20
+  densify_gradient_threshold: 0.0
+  densify_opacity_threshold: 0.1
+  densify_scale_threshold: 0.00045
+  densify_max_screen_radius: 100.0
+  seed: 42
+
+render:
+  backend: cuda
+  background: [0.0, 0.0, 0.0]
+
+output_dir: outputs/dtu_scan63_density_smoke
+

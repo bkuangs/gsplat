@@ -1,9 +1,11 @@
 import json
 import random
+import time
+from dataclasses import asdict
 
 import torch
 
-from gaussian_splatting.config import ExperimentConfig
+from gaussian_splatting.config import ExperimentConfig, config_to_dict
 from gaussian_splatting.data.colmap import load_colmap_scene
 from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.rendering.cuda_backend import CudaRasterizer
@@ -16,6 +18,9 @@ from gaussian_splatting.training.densification import (
 )
 from gaussian_splatting.training.evaluation import evaluate_holdout
 from gaussian_splatting.training.losses import photometric_loss
+from gaussian_splatting.training.splits import (
+    partition_camera_indices as _partition_camera_indices,
+)
 
 
 def _build_optimizer(
@@ -33,30 +38,6 @@ def _build_optimizer(
         ],
         eps=1e-15,
     )
-
-
-def _partition_camera_indices(
-    scene,
-    holdout_image_ids: tuple[int, ...],
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    indices_by_image_id = {
-        camera.image_id: index for index, camera in enumerate(scene.cameras)
-    }
-    missing = sorted(set(holdout_image_ids) - indices_by_image_id.keys())
-    if missing:
-        names = ", ".join(str(image_id) for image_id in missing)
-        raise ValueError(f"holdout image IDs are not registered in the scene: {names}")
-
-    holdout_set = set(holdout_image_ids)
-    training_indices = tuple(
-        index
-        for index, camera in enumerate(scene.cameras)
-        if camera.image_id not in holdout_set
-    )
-    holdout_indices = tuple(indices_by_image_id[image_id] for image_id in holdout_image_ids)
-    if not training_indices:
-        raise ValueError("at least one registered camera must remain for training")
-    return training_indices, holdout_indices
 
 
 def train(config: ExperimentConfig) -> None:
@@ -99,6 +80,8 @@ def train(config: ExperimentConfig) -> None:
     training_indices, holdout_indices = _partition_camera_indices(
         scene,
         config.data.holdout_image_ids,
+        train_image_ids=config.data.train_image_ids,
+        test_image_ids=config.data.test_image_ids,
     )
     scene_extent = torch.linalg.vector_norm(
         scene.points.max(dim=0).values - scene.points.min(dim=0).values
@@ -128,6 +111,7 @@ def train(config: ExperimentConfig) -> None:
         )
 
     model.train()
+    training_started = time.perf_counter()
     with log_path.open("w", encoding="utf-8") as log:
         for step in range(1, config.training.iterations + 1):
             camera_index = random.choice(training_indices)
@@ -147,8 +131,9 @@ def train(config: ExperimentConfig) -> None:
                 config.training.densify_from <= step <= config.training.densify_until
                 and step % config.training.densify_every == 0
             )
+            topology_update = None
             if should_densify:
-                update_gaussian_topology(
+                topology_update = update_gaussian_topology(
                     model,
                     optimizer,
                     stats,
@@ -165,6 +150,8 @@ def train(config: ExperimentConfig) -> None:
                 "loss": loss.item(),
                 "gaussians": model.means.shape[0],
             }
+            if topology_update is not None:
+                record["densification"] = asdict(topology_update)
             log.write(json.dumps(record) + "\n")
             if step == 1 or step % report_every == 0:
                 print(
@@ -172,6 +159,7 @@ def train(config: ExperimentConfig) -> None:
                     f"{config.training.iterations} loss={loss.item():.6f} "
                     f"gaussians={model.means.shape[0]}"
                 )
+    training_seconds = time.perf_counter() - training_started
 
     final_holdout = None
     if holdout_indices:
@@ -187,7 +175,9 @@ def train(config: ExperimentConfig) -> None:
             step=config.training.iterations,
         )
         holdout_summary = {
-            "holdout_image_ids": list(config.data.holdout_image_ids),
+            "holdout_image_ids": [
+                scene.cameras[index].image_id for index in holdout_indices
+            ],
             "initial": initial_holdout,
             "final": final_holdout,
             "mean_psnr_improvement": (
@@ -212,9 +202,32 @@ def train(config: ExperimentConfig) -> None:
         metadata={
             "backend": config.render.backend,
             "gaussians": model.means.shape[0],
-            "holdout_image_ids": list(config.data.holdout_image_ids),
+            "train_image_ids": [
+                scene.cameras[index].image_id for index in training_indices
+            ],
+            "test_image_ids": [
+                scene.cameras[index].image_id for index in holdout_indices
+            ],
             "holdout_mean_psnr": (
                 final_holdout["mean_psnr"] if final_holdout is not None else None
             ),
+            "training_seconds": training_seconds,
         },
+    )
+    run_metadata = {
+        "config": config_to_dict(config),
+        "training_seconds": training_seconds,
+        "iterations": config.training.iterations,
+        "final_gaussians": model.means.shape[0],
+        "train_image_ids": [
+            scene.cameras[index].image_id for index in training_indices
+        ],
+        "test_image_ids": [
+            scene.cameras[index].image_id for index in holdout_indices
+        ],
+        "checkpoint": str(config.output_dir / "final.pt"),
+    }
+    (config.output_dir / "run_metadata.json").write_text(
+        json.dumps(run_metadata, indent=2) + "\n",
+        encoding="utf-8",
     )

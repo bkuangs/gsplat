@@ -16,6 +16,16 @@ class DensificationStats:
     max_screen_radius: torch.Tensor
 
 
+@dataclass(frozen=True)
+class TopologyUpdate:
+    gaussians_before: int
+    cloned: int
+    split_parents: int
+    split_children: int
+    pruned: int
+    gaussians_after: int
+
+
 def create_densification_stats(model: GaussianModel) -> DensificationStats:
     count = model.means.shape[0]
     return DensificationStats(
@@ -110,8 +120,8 @@ def update_gaussian_topology(
     scale_threshold: float = 0.01,
     max_screen_radius: float = 100.0,
     split_count: int = 2,
-) -> GaussianModel:
-    """Clone, split, and prune Gaussians while updating their optimizer state."""
+) -> TopologyUpdate:
+    """Mutate Gaussian topology and return counts for each density-control action."""
     count = model.means.shape[0]
     expected_shape = (count,)
     for name, value in (
@@ -154,7 +164,14 @@ def update_gaussian_topology(
         and clone_indices.numel() == 0
         and split_indices.numel() == 0
     ):
-        return model
+        return TopologyUpdate(
+            gaussians_before=count,
+            cloned=0,
+            split_parents=0,
+            split_children=0,
+            pruned=0,
+            gaussians_after=count,
+        )
 
     split_sources = split_indices.repeat_interleave(split_count)
     split_means = model.means.new_empty((0, 3))
@@ -191,4 +208,11 @@ def update_gaussian_topology(
 
     for name in _PARAMETER_NAMES:
         _replace_parameter(model, optimizer, name, values[name], kept_indices)
-    return model
+    return TopologyUpdate(
+        gaussians_before=count,
+        cloned=clone_indices.numel(),
+        split_parents=split_indices.numel(),
+        split_children=split_sources.numel(),
+        pruned=prune.count_nonzero().item(),
+        gaussians_after=model.means.shape[0],
+    )

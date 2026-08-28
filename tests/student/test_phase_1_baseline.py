@@ -192,7 +192,7 @@ def test_clone_split_prune_preserves_optimizer_state_shapes() -> None:
         max_screen_radius=torch.ones(3),
     )
 
-    update_gaussian_topology(
+    update = update_gaussian_topology(
         model,
         optimizer,
         stats,
@@ -201,6 +201,12 @@ def test_clone_split_prune_preserves_optimizer_state_shapes() -> None:
         scene_extent=1.0,
     )
 
+    assert update.gaussians_before == 3
+    assert update.cloned == 1
+    assert update.split_parents == 1
+    assert update.split_children == 2
+    assert update.pruned == 1
+    assert update.gaussians_after == 4
     assert model.means.shape == (4, 3)
     optimizer_parameters = {
         parameter for group in optimizer.param_groups for parameter in group["params"]

@@ -48,8 +48,11 @@ def test_training_excludes_fixed_holdout_and_saves_evidence(
         model=ModelConfig(sh_degree=0, initial_opacity=0.8, initial_scale=0.05),
         training=TrainingConfig(
             iterations=1,
-            densify_from=2,
-            densify_until=2,
+            densify_from=1,
+            densify_until=1,
+            densify_every=1,
+            densify_gradient_threshold=0.0,
+            densify_opacity_threshold=0.0,
         ),
         render=RenderConfig(backend="torch"),
         output_dir=output_dir,
@@ -58,9 +61,28 @@ def test_training_excludes_fixed_holdout_and_saves_evidence(
     trainer.train(config)
 
     metrics = json.loads((output_dir / "holdout_metrics.json").read_text())
+    training_record = json.loads(
+        (output_dir / "training.jsonl").read_text(encoding="utf-8")
+    )
+    run_metadata = json.loads(
+        (output_dir / "run_metadata.json").read_text(encoding="utf-8")
+    )
     assert metrics["holdout_image_ids"] == [7]
     assert metrics["initial"]["cameras"][0]["image_id"] == 7
     assert metrics["final"]["cameras"][0]["image_id"] == 7
+    assert training_record["densification"] == {
+        "gaussians_before": 1,
+        "cloned": 0,
+        "split_parents": 1,
+        "split_children": 2,
+        "pruned": 0,
+        "gaussians_after": 2,
+    }
+    assert training_record["gaussians"] == 2
+    assert run_metadata["training_seconds"] >= 0
+    assert run_metadata["train_image_ids"] == [3]
+    assert run_metadata["test_image_ids"] == [7]
+    assert run_metadata["final_gaussians"] == 2
     for relative_path in (
         "holdout/targets/image_0007.png",
         "holdout/initial/image_0007_rgb.png",

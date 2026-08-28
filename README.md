@@ -89,15 +89,41 @@ uv run gsplat-learn inspect-colmap --config configs/baseline.yaml
 ```
 
 The `train` command supports both backends and records per-step loss and Gaussian count
-to `training.jsonl` in the configured output directory.
+to `training.jsonl` in the configured output directory. Densification steps also record
+the numbers cloned, split, and pruned, together with the topology size before and after.
 
-To reserve fixed COLMAP cameras for a deterministic Phase 1 holdout, list their image
-IDs under `data.holdout_image_ids`. Training excludes those cameras and writes initial
-and final RGB, alpha, depth, and PSNR evidence under the run's `holdout/` directory:
+Define reusable camera splits with `data.train_image_ids` and `data.test_image_ids`.
+The earlier `data.holdout_image_ids` form remains supported as a shorthand for using
+all other cameras for training. Training writes initial and final RGB, alpha, depth,
+and PSNR evidence under the run's `holdout/` directory:
 
 ```bash
 uv run gsplat-learn train --config configs/dtu_scan63_holdout.yaml
 ```
+
+The final Phase 1 acceptance checks are intentionally small:
+
+```bash
+uv run pytest -q -s \
+  tests/student/test_phase_1_overfit.py::test_tiny_synthetic_scene_overfits
+uv run gsplat-learn train --config configs/dtu_scan63_density_smoke.yaml
+```
+
+The synthetic test requires a 50-fold loss reduction and 45 dB PSNR. The 20-step DTU
+smoke run performs one density-control update; its last `training.jsonl` record must
+contain nonzero clone, split-parent, split-child, and prune counts.
+
+Install the Phase 2 metrics and plotting dependencies, evaluate a checkpoint on its
+fixed split, and create the run summary:
+
+```bash
+uv sync --extra dev --extra data --extra cuda --extra evaluation
+uv run gsplat-learn evaluate --config configs/dtu_scan63_holdout.yaml
+uv run gsplat-learn plot outputs/dtu_scan63_holdout
+```
+
+Evaluation writes per-camera JSON/CSV metrics and train/test RGB, alpha, and depth
+renders under `outputs/dtu_scan63_holdout/evaluation/`.
 
 ## Four-week path
 
