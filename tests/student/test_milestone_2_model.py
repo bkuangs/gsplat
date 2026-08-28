@@ -1,9 +1,6 @@
-import pytest
 import torch
 
 from gaussian_splatting.model import GaussianModel
-
-pytestmark = pytest.mark.skip(reason="TODO(student): remove after implementing milestone 2")
 
 
 def test_point_cloud_initialization_has_valid_parameters() -> None:
@@ -23,4 +20,17 @@ def test_point_cloud_initialization_has_valid_parameters() -> None:
         torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
     )
     torch.testing.assert_close(model.opacities, torch.full((2, 1), 0.1))
-    torch.testing.assert_close(model.scales, torch.full((2, 3), 0.01))
+    torch.testing.assert_close(model.scales, torch.ones(2, 3))
+
+
+def test_point_cloud_initialization_uses_local_spacing() -> None:
+    points = torch.tensor([[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [4.0, 0.0, 1.0]])
+    model = GaussianModel.from_point_cloud(
+        points,
+        torch.ones_like(points),
+        sh_degree=0,
+        initial_opacity=0.1,
+        initial_scale=0.01,
+    )
+    expected = torch.tensor([1.0, 1.0, 3.0])[:, None].expand_as(points)
+    torch.testing.assert_close(model.scales, expected)

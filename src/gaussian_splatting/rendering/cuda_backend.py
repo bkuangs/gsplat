@@ -32,7 +32,7 @@ class CudaRasterizer(nn.Module):
         if camera.world_to_camera.device.type != "cuda":
             raise ValueError("CudaRasterizer requires camera tensors on a CUDA device")
 
-        rgb, alpha, metadata = self._rasterization(
+        rendered, alpha, metadata = self._rasterization(
             means=model.means,
             quats=model.normalized_quaternions,
             scales=model.scales,
@@ -46,10 +46,25 @@ class CudaRasterizer(nn.Module):
             backgrounds=torch.tensor(
                 [background], device=model.means.device, dtype=model.means.dtype
             ),
-            render_mode="RGB",
+            render_mode="RGB+ED",
         )
+        means_2d = metadata["means2d"][0]
+        if means_2d.requires_grad:
+            means_2d.retain_grad()
+        projected_radii = metadata["radii"][0]
+        if projected_radii.ndim == 2:
+            visibility = (projected_radii > 0).all(dim=-1)
+            radii = projected_radii.max(dim=-1).values
+        elif projected_radii.ndim == 1:
+            radii = projected_radii
+            visibility = radii > 0
+        else:
+            raise RuntimeError("gsplat returned radii with an unsupported shape")
         return RenderOutput(
-            rgb=rgb[0].permute(2, 0, 1),
+            rgb=rendered[0, ..., :3].permute(2, 0, 1),
             alpha=alpha[0].permute(2, 0, 1),
-            radii=metadata.get("radii"),
+            depth=rendered[0, ..., 3:].permute(2, 0, 1),
+            radii=radii,
+            means_2d=means_2d,
+            visibility=visibility,
         )

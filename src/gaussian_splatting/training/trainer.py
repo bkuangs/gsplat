@@ -1,8 +1,7 @@
+import json
 import random
 
-import numpy as np
 import torch
-from PIL import Image
 
 from gaussian_splatting.config import ExperimentConfig
 from gaussian_splatting.data.colmap import load_colmap_scene
@@ -10,21 +9,12 @@ from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.rendering.cuda_backend import CudaRasterizer
 from gaussian_splatting.rendering.torch_backend import TorchRasterizer
 from gaussian_splatting.training.checkpoint import save_checkpoint
+from gaussian_splatting.training.densification import (
+    accumulate_densification_stats,
+    create_densification_stats,
+    update_gaussian_topology,
+)
 from gaussian_splatting.training.losses import photometric_loss
-from gaussian_splatting.types import Camera
-
-
-def _load_target(camera: Camera, device: torch.device) -> torch.Tensor:
-    if camera.image_path is None:
-        raise ValueError("training cameras must reference an image")
-
-    with Image.open(camera.image_path) as image:
-        image = image.convert("RGB")
-        if image.size != (camera.width, camera.height):
-            image = image.resize((camera.width, camera.height), Image.Resampling.LANCZOS)
-        pixels = np.asarray(image, dtype=np.float32) / 255.0
-
-    return torch.from_numpy(pixels).permute(2, 0, 1).contiguous().to(device)
 
 
 def _build_optimizer(
@@ -48,6 +38,10 @@ def train(config: ExperimentConfig) -> None:
     """Optimize a Gaussian scene from registered images."""
     if config.training.iterations < 1:
         raise ValueError("training.iterations must be positive")
+    if config.training.densify_every < 1:
+        raise ValueError("training.densify_every must be positive")
+    if config.training.densify_until < config.training.densify_from:
+        raise ValueError("training.densify_until must not precede densify_from")
 
     random.seed(config.training.seed)
     torch.manual_seed(config.training.seed)
@@ -76,43 +70,70 @@ def train(config: ExperimentConfig) -> None:
     ).to(device)
     renderer = renderer.to(device)
     optimizer = _build_optimizer(model, config)
+    stats = create_densification_stats(model)
+    scene_extent = torch.linalg.vector_norm(
+        scene.points.max(dim=0).values - scene.points.min(dim=0).values
+    ).item()
+    if scene_extent <= 0.0:
+        scene_extent = config.model.initial_scale
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
     report_every = max(1, min(100, config.training.iterations // 10))
+    log_path = config.output_dir / "training.jsonl"
 
     model.train()
-    for step in range(1, config.training.iterations + 1):
-        camera = random.choice(scene.cameras)
-        device_camera = camera.to(device)
-        target = _load_target(camera, device)
+    with log_path.open("w", encoding="utf-8") as log:
+        for step in range(1, config.training.iterations + 1):
+            camera_index = random.randrange(len(scene.cameras))
+            camera = scene.cameras[camera_index]
+            device_camera = camera.to(device)
+            target = scene.images[camera_index].to(device)
 
-        optimizer.zero_grad(set_to_none=True)
-        output = renderer(model, device_camera, config.render.background)
-        loss = photometric_loss(output.rgb, target)
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            output = renderer(model, device_camera, config.render.background)
+            loss = photometric_loss(output.rgb, target)
+            loss.backward()
+            if step <= config.training.densify_until:
+                accumulate_densification_stats(stats, output)
+            optimizer.step()
 
-        # Density control belongs here once screen-space gradient statistics are
-        # exposed by both renderers (Milestone 4).
-        should_densify = (
-            config.training.densify_from <= step <= config.training.densify_until
-            and step % config.training.densify_every == 0
-        )
-        if should_densify:
-            pass
-
-        if step == 1 or step % report_every == 0:
-            print(
-                f"step {step:>{len(str(config.training.iterations))}}/"
-                f"{config.training.iterations} loss={loss.item():.6f} "
-                f"gaussians={model.means.shape[0]}"
+            should_densify = (
+                config.training.densify_from <= step <= config.training.densify_until
+                and step % config.training.densify_every == 0
             )
+            if should_densify:
+                update_gaussian_topology(
+                    model,
+                    optimizer,
+                    stats,
+                    gradient_threshold=config.training.densify_gradient_threshold,
+                    opacity_threshold=config.training.densify_opacity_threshold,
+                    scene_extent=scene_extent,
+                    scale_threshold=config.training.densify_scale_threshold,
+                    max_screen_radius=config.training.densify_max_screen_radius,
+                )
+                stats = create_densification_stats(model)
+
+            record = {
+                "step": step,
+                "loss": loss.item(),
+                "gaussians": model.means.shape[0],
+            }
+            log.write(json.dumps(record) + "\n")
+            if step == 1 or step % report_every == 0:
+                print(
+                    f"step {step:>{len(str(config.training.iterations))}}/"
+                    f"{config.training.iterations} loss={loss.item():.6f} "
+                    f"gaussians={model.means.shape[0]}"
+                )
 
     save_checkpoint(
         config.output_dir / "final.pt",
         model,
         optimizer,
         step=config.training.iterations,
-        metadata={"backend": config.render.backend},
+        metadata={
+            "backend": config.render.backend,
+            "gaussians": model.means.shape[0],
+        },
     )
-

@@ -1,9 +1,8 @@
 # 3D Gaussian Splatting, From the Math Up
 
 An educational implementation of 3D Gaussian Splatting (3DGS) aimed at graphics and
-computer-vision learning. The repository deliberately provides the engineering
-scaffold while leaving the central representation, rendering, optimization, and
-adaptive density-control work as `TODO(student)` exercises.
+computer-vision learning. The repository includes a readable PyTorch reference
+renderer and an adapter for the optimized `gsplat` CUDA backend.
 
 The target demo is a trained scene and smooth novel-view video from images registered
 by COLMAP. A readable PyTorch renderer establishes correctness; the external
@@ -15,11 +14,11 @@ training practical.
 | Area | Your implementation | Scaffolded for you |
 | --- | --- | --- |
 | Geometry | Pinhole projection, 3D covariance, covariance projection | Camera types and validation |
-| Representation | Gaussian initialization, SH features, parameter activations | Typed `nn.Module` parameter container |
-| Rendering | PyTorch splatting, visibility, sorting, alpha compositing | CUDA backend adapter |
+| Representation | Local-spacing initialization, SH features, parameter activations | Typed `nn.Module` parameter container |
+| Rendering | PyTorch splatting, visibility, sorting, alpha compositing, expected depth | CUDA backend adapter |
 | Learning | Photometric loss, optimizer groups, training loop | Config and checkpoint I/O |
 | Density control | Gradient statistics, clone/split/prune, optimizer-state updates | Scheduling fields and data types |
-| Data and output | Dataset sampling and final camera path integration | COLMAP loading, metrics, CLI skeleton |
+| Data and output | COLMAP loading, image sampling, training logs | Metrics and CLI |
 
 This split is intentional. Writing another COLMAP parser, argument framework, or
 checkpoint format adds little interview value. Deriving covariance projection and
@@ -88,8 +87,8 @@ directory:
 uv run gsplat-learn inspect-colmap --config configs/baseline.yaml
 ```
 
-The `train` command is wired but intentionally raises `NotImplementedError` until
-milestone 3.
+The `train` command supports both backends and records per-step loss and Gaussian count
+to `training.jsonl` in the configured output directory.
 
 ## Four-week path
 
@@ -136,17 +135,17 @@ configs/                         experiment configuration
 docs/ideas/gsplat.md             scope and assumptions
 src/gaussian_splatting/
   data/colmap.py                 prebuilt COLMAP adapter
-  math/projection.py             TODO: projection and covariance math
-  model/gaussians.py             TODO: point-cloud initialization
+  math/projection.py             projection and covariance math
+  model/gaussians.py             point-cloud initialization
   rendering/
-    compositing.py               TODO: alpha compositing
-    torch_backend.py             TODO: reference rasterizer
+    compositing.py               alpha compositing
+    torch_backend.py             reference rasterizer
     cuda_backend.py              prebuilt optimized-backend adapter
   training/
     checkpoint.py               prebuilt checkpoint I/O
-    losses.py                    TODO: photometric objective
-    densification.py            TODO: adaptive density control
-    trainer.py                  TODO: optimization loop
+    losses.py                    photometric objective
+    densification.py            adaptive density control
+    trainer.py                  optimization loop
 tests/scaffold/                  tests for provided infrastructure
 tests/student/                   skipped acceptance tests to unlock by milestone
 ```

@@ -18,6 +18,10 @@ training:
   densify_from: 500
   densify_until: 15000
   densify_every: 100
+  densify_gradient_threshold: 0.0002
+  densify_opacity_threshold: 0.005
+  densify_scale_threshold: 0.01
+  densify_max_screen_radius: 100.0
   seed: 42
 
 render:
@@ -25,4 +29,3 @@ render:
   background: [0.0, 0.0, 0.0]
 
 output_dir: outputs/baseline
-

@@ -30,6 +30,10 @@ class TrainingConfig:
     densify_from: int = 500
     densify_until: int = 15_000
     densify_every: int = 100
+    densify_gradient_threshold: float = 0.0002
+    densify_opacity_threshold: float = 0.005
+    densify_scale_threshold: float = 0.01
+    densify_max_screen_radius: float = 100.0
     seed: int = 42
 
 
@@ -111,4 +115,3 @@ def load_config(path: Path) -> ExperimentConfig:
         render=render,
         output_dir=Path(raw.get("output_dir", "outputs/default")),
     )
-

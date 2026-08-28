@@ -13,7 +13,7 @@ def _status(_: argparse.Namespace) -> None:
     print(f"learn-3d-gaussian-splatting {__version__}")
     print(f"PyTorch: {torch.__version__}")
     print(f"CUDA available: {torch.cuda.is_available()}")
-    print("Next milestone: implement projection and compositing, then unskip milestone 1 tests.")
+    print("Phase 1 baseline: COLMAP, reference/CUDA rendering, training, and density control.")
 
 
 def _inspect_colmap(args: argparse.Namespace) -> None:
@@ -60,4 +60,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

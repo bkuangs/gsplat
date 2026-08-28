@@ -1,10 +1,7 @@
-import pytest
 import torch
 
 from gaussian_splatting.math.projection import covariance_3d, project_points
 from gaussian_splatting.rendering.compositing import alpha_composite
-
-pytestmark = pytest.mark.skip(reason="TODO(student): remove after implementing milestone 1")
 
 
 def test_identity_camera_projects_to_principal_point() -> None:
