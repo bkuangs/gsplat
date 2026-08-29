@@ -164,6 +164,71 @@ fraction of valid ground-truth samples meeting those prediction conditions. Miss
 training-view depth files leave depth metrics unavailable; a missing test-view file is
 an error.
 
+### Phase 3 sparse-view pilot
+
+`configs/phase3/dtu_scan63.yaml` defines the controlled four-run pilot on DTU scan63:
+
+| Run | Training cameras | Gradient threshold |
+| --- | ---: | ---: |
+| `full_baseline` | 39 | `0.001` |
+| `full_aggressive` | 39 | `0.0005` |
+| `sparse_baseline` | 4 | `0.001` |
+| `sparse_aggressive` | 4 | `0.0005` |
+
+All runs use seed 42 and the same ten held-out test cameras. The sparse cameras are a
+fixed stratified 10% subset (`3, 14, 32, 43`) of the ordered 39-camera training pool,
+selected with seed 42. Manifest validation reproduces that selection and rejects
+changes to any setting other than the training-camera subset, gradient threshold, and
+output directory. The model initialization remains the same COLMAP point cloud in all
+four conditions, so the sparse treatment changes photometric camera supervision rather
+than the initial geometric prior. All four runs use `data.downscale: 2` to keep the
+growing models within an 8 GB GPU budget. They also share a 250,000-Gaussian emergency
+ceiling. A 3,000-step calibration reached 24,576 Gaussians for baseline and 35,802 for
+aggressive, so the ceiling is intended as crash protection rather than an active
+treatment.
+
+Run the 500-step, quarter-resolution pre-flight first. It requires baseline density
+control to create clone/split additions and the aggressive threshold to create more:
+
+```bash
+uv run gsplat-learn phase3-preflight
+```
+
+The run command also performs or reuses this pre-flight before starting a full
+condition. Run each condition independently so an interrupted pilot does not discard
+completed work:
+
+```bash
+uv run gsplat-learn phase3-run --run full_baseline
+uv run gsplat-learn phase3-run --run full_aggressive
+uv run gsplat-learn phase3-run --run sparse_baseline
+uv run gsplat-learn phase3-run --run sparse_aggressive
+```
+
+`--run all` runs the same sequence in one process. A completed checkpoint is reused for
+evaluation only when its persisted config exactly matches the manifest. A non-empty
+output directory without a resumable checkpoint is rejected to avoid silently
+overwriting a partial experiment, and all selected output directories are checked
+before training begins. Phase 3 saves `latest.pt` every 100 steps, including optimizer,
+random-number, elapsed-time, and densification state. Re-run the same command after an
+interruption to resume from that checkpoint; successful completion replaces it with
+`final.pt`.
+
+After all four conditions finish, aggregate the controlled comparison:
+
+```bash
+uv run gsplat-learn phase3-report
+```
+
+This writes `phase3_metrics.json`, `phase3_metrics.csv`, and `phase3_summary.png` under
+`outputs/phase3_dtu_scan63/`. The report includes train/test PSNR, the PSNR gap, test
+LPIPS, test depth AbsRel and coverage, final Gaussian count, training time, and the
+aggressive-minus-baseline effect at each supervision level. It also records whether a
+run reached the shared Gaussian safety ceiling; a saturated condition must be
+interpreted as budget-limited. Because AbsRel excludes
+samples below the alpha threshold, compare its effect jointly with the coverage effect;
+different runs may cover different depth samples.
+
 ## Four-week path
 
 ### Week 1 — camera and image formation

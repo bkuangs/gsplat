@@ -16,9 +16,11 @@ from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.rendering.torch_backend import TorchRasterizer
 from gaussian_splatting.training.densification import (
     DensificationStats,
+    accumulate_densification_stats,
+    create_densification_stats,
     update_gaussian_topology,
 )
-from gaussian_splatting.types import Camera
+from gaussian_splatting.types import Camera, RenderOutput
 
 
 def _camera(image_path: Path | None = None) -> Camera:
@@ -135,6 +137,28 @@ def test_reference_renderer_retains_zero_screen_gradient_when_scene_is_hidden() 
     torch.testing.assert_close(output.means_2d.grad, torch.zeros_like(output.means_2d))
 
 
+def test_densification_gradients_use_normalized_screen_space() -> None:
+    model = _model()
+    stats = create_densification_stats(model)
+    means_2d = torch.zeros(1, 2, requires_grad=True)
+    means_2d.grad = torch.tensor([[0.01, 0.02]])
+    output = RenderOutput(
+        rgb=torch.zeros(3, 50, 100),
+        alpha=torch.zeros(1, 50, 100),
+        radii=torch.ones(1),
+        means_2d=means_2d,
+        visibility=torch.ones(1, dtype=torch.bool),
+    )
+
+    accumulate_densification_stats(stats, output, image_width=100, image_height=50)
+
+    torch.testing.assert_close(
+        stats.position_gradient_accumulator,
+        torch.tensor([2.0**-0.5]),
+    )
+    torch.testing.assert_close(stats.observation_count, torch.ones(1))
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 def test_cuda_backend_agrees_with_reference_on_tiny_scene() -> None:
     pytest.importorskip("gsplat")
@@ -215,3 +239,37 @@ def test_clone_split_prune_preserves_optimizer_state_shapes() -> None:
     for parameter, state in optimizer.state.items():
         assert state["exp_avg"].shape == parameter.shape
         assert state["exp_avg_sq"].shape == parameter.shape
+
+
+def test_topology_update_respects_gaussian_budget() -> None:
+    model = GaussianModel.from_point_cloud(
+        torch.tensor([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0], [0.2, 0.0, 1.0]]),
+        torch.ones(3, 3),
+        sh_degree=0,
+        initial_opacity=0.8,
+        initial_scale=0.001,
+    )
+    model.log_scales.data.fill_(torch.tensor(0.001).log())
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    stats = DensificationStats(
+        position_gradient_accumulator=torch.tensor([3.0, 2.0, 1.0]),
+        observation_count=torch.ones(3),
+        max_screen_radius=torch.ones(3),
+    )
+
+    update = update_gaussian_topology(
+        model,
+        optimizer,
+        stats,
+        gradient_threshold=0.5,
+        opacity_threshold=0.0,
+        scene_extent=1.0,
+        max_gaussians=5,
+    )
+
+    assert update.cloned == 2
+    assert update.gaussians_after == 5
+    torch.testing.assert_close(
+        model.means[-2:],
+        torch.tensor([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0]]),
+    )

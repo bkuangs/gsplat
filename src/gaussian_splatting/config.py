@@ -38,6 +38,8 @@ class TrainingConfig:
     densify_opacity_threshold: float = 0.005
     densify_scale_threshold: float = 0.01
     densify_max_screen_radius: float = 100.0
+    densify_max_gaussians: int | None = None
+    checkpoint_every: int = 0
     seed: int = 42
 
 

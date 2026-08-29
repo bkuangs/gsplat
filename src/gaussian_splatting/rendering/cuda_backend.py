@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 
+import torch
 from torch import nn
 
 from gaussian_splatting.model import GaussianModel
@@ -98,29 +99,46 @@ class CudaRasterizer(nn.Module):
             width=camera.width,
             height=camera.height,
             sh_degree=self.sh_degree,
-            backgrounds=model.means.new_tensor([background]),
-            packed=False,
+            backgrounds=None,
+            packed=True,
             render_mode="RGB+ED",
         )
         projected_means = metadata["means2d"]
-        means_2d = projected_means[0]
+        gaussian_ids = metadata["gaussian_ids"]
+        means_2d = model.means.new_zeros(
+            (model.means.shape[0], 2),
+            requires_grad=projected_means.requires_grad,
+        )
         if projected_means.requires_grad:
             def retain_projected_gradient(gradient):
-                means_2d.grad = gradient[0]
+                dense_gradient = torch.zeros_like(means_2d)
+                dense_gradient.index_add_(0, gaussian_ids, gradient)
+                means_2d.grad = dense_gradient
                 return gradient
 
             projected_means.register_hook(retain_projected_gradient)
-        projected_radii = metadata["radii"][0]
+        projected_radii = metadata["radii"]
         if projected_radii.ndim == 2:
-            visibility = (projected_radii > 0).all(dim=-1)
-            radii = projected_radii.max(dim=-1).values
+            packed_radii = projected_radii.max(dim=-1).values
         elif projected_radii.ndim == 1:
-            radii = projected_radii
-            visibility = radii > 0
+            packed_radii = projected_radii
         else:
             raise RuntimeError("gsplat returned radii with an unsupported shape")
+        radii = model.means.new_zeros(model.means.shape[0])
+        radii.scatter_reduce_(
+            0,
+            gaussian_ids,
+            packed_radii.to(radii.dtype),
+            reduce="amax",
+            include_self=False,
+        )
+        visibility = radii > 0
+        rgb = rendered[0, ..., :3].permute(2, 0, 1)
+        if any(value != 0.0 for value in background):
+            background_tensor = model.means.new_tensor(background)[:, None, None]
+            rgb = rgb + (1.0 - alpha[0].permute(2, 0, 1)) * background_tensor
         return RenderOutput(
-            rgb=rendered[0, ..., :3].permute(2, 0, 1),
+            rgb=rgb,
             alpha=alpha[0].permute(2, 0, 1),
             depth=rendered[0, ..., 3:].permute(2, 0, 1),
             radii=radii,

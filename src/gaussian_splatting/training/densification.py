@@ -38,12 +38,16 @@ def create_densification_stats(model: GaussianModel) -> DensificationStats:
 def accumulate_densification_stats(
     stats: DensificationStats,
     output: RenderOutput,
+    image_width: int,
+    image_height: int,
 ) -> None:
-    """Accumulate visible screen-space gradient magnitude and maximum radius."""
+    """Accumulate normalized screen-space gradient magnitude and maximum radius."""
     if output.means_2d is None or output.radii is None:
         raise ValueError("renderer output must include means_2d and radii")
     if output.means_2d.grad is None:
         raise RuntimeError("screen-space gradients must be retained before accumulation")
+    if image_width <= 0 or image_height <= 0:
+        raise ValueError("image dimensions must be positive")
     count = stats.observation_count.shape[0]
     if output.means_2d.shape != (count, 2) or output.radii.shape != (count,):
         raise ValueError("renderer statistics do not match the current Gaussian count")
@@ -53,7 +57,10 @@ def accumulate_densification_stats(
         if output.visibility is not None
         else output.radii > 0
     )
-    gradients = torch.linalg.vector_norm(output.means_2d.grad.detach(), dim=-1)
+    normalized_gradient = output.means_2d.grad.detach().clone()
+    normalized_gradient[:, 0] *= image_width / 2.0
+    normalized_gradient[:, 1] *= image_height / 2.0
+    gradients = torch.linalg.vector_norm(normalized_gradient, dim=-1)
     with torch.no_grad():
         stats.position_gradient_accumulator[visibility] += gradients[visibility]
         stats.observation_count[visibility] += 1
@@ -119,6 +126,7 @@ def update_gaussian_topology(
     *,
     scale_threshold: float = 0.01,
     max_screen_radius: float = 100.0,
+    max_gaussians: int | None = None,
     split_count: int = 2,
 ) -> TopologyUpdate:
     """Mutate Gaussian topology and return counts for each density-control action."""
@@ -135,8 +143,12 @@ def update_gaussian_topology(
         raise ValueError("densification thresholds must be non-negative")
     if scene_extent <= 0 or scale_threshold <= 0 or max_screen_radius <= 0:
         raise ValueError("scene and size thresholds must be positive")
+    if max_gaussians is not None and max_gaussians < 1:
+        raise ValueError("max_gaussians must be positive")
     if split_count < 2:
         raise ValueError("split_count must be at least 2")
+    if max_gaussians is not None and split_count != 2:
+        raise ValueError("max_gaussians currently requires split_count=2")
 
     average_gradient = torch.where(
         stats.observation_count > 0,
@@ -155,6 +167,19 @@ def update_gaussian_topology(
     small = model.scales.max(dim=-1).values <= scale_threshold * scene_extent
     clone = high_gradient & small
     split = high_gradient & ~small
+    if max_gaussians is not None:
+        remaining_count = count - prune.count_nonzero().item()
+        available_growth = max(0, max_gaussians - remaining_count)
+        candidate_indices = high_gradient.nonzero(as_tuple=False).squeeze(-1)
+        if candidate_indices.numel() > available_growth:
+            candidate_gradients = average_gradient[candidate_indices]
+            selected_indices = candidate_indices[
+                torch.argsort(candidate_gradients, descending=True)[:available_growth]
+            ]
+            selected = torch.zeros_like(high_gradient)
+            selected[selected_indices] = True
+            clone &= selected
+            split &= selected
 
     kept_indices = (~prune & ~split).nonzero(as_tuple=False).squeeze(-1)
     clone_indices = clone.nonzero(as_tuple=False).squeeze(-1)

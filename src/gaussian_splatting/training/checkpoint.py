@@ -16,6 +16,7 @@ def save_checkpoint(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
     torch.save(
         {
             "model": model.state_dict(),
@@ -23,8 +24,9 @@ def save_checkpoint(
             "step": step,
             "metadata": metadata or {},
         },
-        path,
+        temporary_path,
     )
+    temporary_path.replace(path)
 
 
 def load_checkpoint(

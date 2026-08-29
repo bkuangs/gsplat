@@ -6,6 +6,13 @@ import torch
 from gaussian_splatting import __version__
 from gaussian_splatting.config import load_config
 from gaussian_splatting.data.colmap import load_colmap_scene
+from gaussian_splatting.phase3 import (
+    PHASE3_RUN_NAMES,
+    load_phase3_manifest,
+    run_phase3,
+    run_phase3_preflight,
+    write_phase3_report,
+)
 from gaussian_splatting.plotting import plot_run
 from gaussian_splatting.training.evaluation import evaluate_checkpoint
 from gaussian_splatting.training.trainer import train
@@ -59,6 +66,38 @@ def _plot(args: argparse.Namespace) -> None:
     print(plot_run(args.run_dir, args.evaluation_dir))
 
 
+def _phase3_run(args: argparse.Namespace) -> None:
+    manifest = load_phase3_manifest(args.manifest)
+    for output_dir in run_phase3(manifest, args.run):
+        print(output_dir)
+
+
+def _phase3_preflight(args: argparse.Namespace) -> None:
+    manifest = load_phase3_manifest(args.manifest)
+    result = run_phase3_preflight(manifest)
+    for name, event in result["events"].items():
+        print(
+            f"{name}: cloned={event['cloned']} "
+            f"split_children={event['split_children']} "
+            f"pruned={event['pruned']} "
+            f"gaussians_after={event['gaussians_after']}"
+        )
+
+
+def _phase3_report(args: argparse.Namespace) -> None:
+    manifest = load_phase3_manifest(args.manifest)
+    report, plot_path = write_phase3_report(manifest)
+    for row in report["runs"]:
+        print(
+            f"{row['run']}: train_psnr={_format_metric(row['train_psnr'])} "
+            f"test_psnr={_format_metric(row['test_psnr'])} "
+            f"test_lpips={_format_metric(row['test_lpips'])} "
+            f"depth_abs_rel={_format_metric(row['test_depth_abs_rel'])} "
+            f"gaussians={row['final_gaussians']}"
+        )
+    print(plot_path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gsplat-learn",
@@ -107,6 +146,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="read metrics from and write the summary to a custom evaluation directory",
     )
     plot_parser.set_defaults(handler=_plot)
+
+    phase3_run_parser = subparsers.add_parser(
+        "phase3-run",
+        help="train, evaluate, and plot one or all Phase 3 pilot conditions",
+    )
+    phase3_run_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("configs/phase3/dtu_scan63.yaml"),
+    )
+    phase3_run_parser.add_argument(
+        "--run",
+        choices=("all", *PHASE3_RUN_NAMES),
+        default="all",
+    )
+    phase3_run_parser.set_defaults(handler=_phase3_run)
+
+    phase3_preflight_parser = subparsers.add_parser(
+        "phase3-preflight",
+        help="verify that Phase 3 density thresholds produce distinct growth",
+    )
+    phase3_preflight_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("configs/phase3/dtu_scan63.yaml"),
+    )
+    phase3_preflight_parser.set_defaults(handler=_phase3_preflight)
+
+    phase3_report_parser = subparsers.add_parser(
+        "phase3-report",
+        help="aggregate the completed Phase 3 pilot",
+    )
+    phase3_report_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("configs/phase3/dtu_scan63.yaml"),
+    )
+    phase3_report_parser.set_defaults(handler=_phase3_report)
     return parser
 
 
