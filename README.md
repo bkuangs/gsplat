@@ -229,6 +229,118 @@ interpreted as budget-limited. Because AbsRel excludes
 samples below the alpha threshold, compare its effect jointly with the coverage effect;
 different runs may cover different depth samples.
 
+### Phase 4 aligned monocular depth
+
+Phase 4 adds exactly one training intervention to the failing sparse-aggressive
+condition: a robust loss against fixed, COLMAP-aligned monocular depth. Install the
+generator dependency and produce priors for the four training cameras:
+
+```bash
+uv sync --extra dev --extra data --extra cuda --extra evaluation --extra depth
+uv run gsplat-learn generate-depth-priors \
+  --config configs/phase4/dtu_scan63_sparse_aggressive_depth.yaml
+```
+
+The generator uses the frozen
+`depth-anything/Depth-Anything-V2-Small-hf` relative-depth model. For each training
+camera it:
+
+1. Predicts a dense relative inverse-depth map once.
+2. Samples that prediction at the camera's recorded COLMAP observations.
+3. Computes camera-space z for the corresponding COLMAP points.
+4. Robustly fits scale and shift to COLMAP inverse depth.
+5. Rejects alignments with fewer than 20 valid anchors, non-positive inverse depth on
+   more than 10% of anchors, or median anchor AbsRel above 0.25.
+6. Saves the aligned depth, valid mask, visualization, fit statistics, and checksum.
+
+Priors are written to `outputs/phase4_dtu_scan63/depth_priors/`. Training verifies
+their image IDs, names, dimensions, split, checksums, source RGB content, camera
+matrices, and COLMAP alignment anchors, and persists their complete provenance in
+checkpoints. Regenerating, modifying, or applying priors to changed scene data cannot
+silently alter a resumed experiment.
+
+The configured loss is:
+
+```text
+total_loss = rgb_loss + 0.1 * smooth_l1(log(rendered_depth) - log(prior_depth))
+```
+
+It applies only where the aligned prior is valid, rendered depth is finite and
+positive, and rendered alpha exceeds 0.1. Run the intervention with:
+
+```bash
+uv run gsplat-learn train \
+  --config configs/phase4/dtu_scan63_sparse_aggressive_depth.yaml
+uv run gsplat-learn evaluate \
+  --config configs/phase4/dtu_scan63_sparse_aggressive_depth.yaml
+uv run gsplat-learn plot outputs/phase4_dtu_scan63/sparse_aggressive_depth
+```
+
+`training.jsonl` records total loss, RGB loss, depth loss, and prior coverage. Phase 5
+compares this run directly with the completed Phase 3 `sparse_aggressive` RGB-only
+condition.
+
+### Phase 6 three-scene validation
+
+Phase 6 tests whether the positive scan63 intervention transfers to DTU scan24 and
+scan110. It keeps the same optimizer, aggressive `0.0005` densification
+threshold, depth-loss settings, downscale, Gaussian ceiling, and ten-camera
+deterministic test split. The only within-scene treatment difference remains RGB-only
+versus RGB plus aligned monocular depth.
+
+The fixed sparse training cameras are:
+
+| Scene | Sparse training IDs | Held-out test IDs |
+| --- | --- | --- |
+| scan24 | `3, 14, 32, 43` | `1, 6, 11, 16, 21, 26, 31, 36, 41, 46` |
+| scan63 | `3, 14, 32, 43` | `1, 6, 11, 16, 21, 26, 31, 36, 41, 46` |
+| scan110 | `13, 16, 27, 45, 57` | `1, 8, 15, 22, 29, 35, 41, 47, 53, 59` |
+
+Generate the new priors, then run each paired comparison independently:
+
+```bash
+uv run gsplat-learn phase6-priors --scene scan24
+uv run gsplat-learn phase6-run --scene scan24 --condition rgb
+uv run gsplat-learn phase6-run --scene scan24 --condition depth
+
+uv run gsplat-learn phase6-priors --scene scan110
+uv run gsplat-learn phase6-run --scene scan110 --condition rgb
+uv run gsplat-learn phase6-run --scene scan110 --condition depth
+```
+
+`phase6-run --scene <scene>` runs both conditions and automatically generates or
+validates the required priors. Completed scan63 Phase 3 and Phase 4 artifacts are
+reused even though their persisted paths use different relative/absolute forms.
+Interrupted new runs resume from their 100-step recovery checkpoints.
+
+The original seed-42 comparison can be summarized with:
+
+```bash
+uv run gsplat-learn phase6-report
+```
+
+Positive test-PSNR effects and negative LPIPS, depth-AbsRel, and train-test-gap effects
+favor depth guidance.
+
+The manifest also defines training seeds `42`, `7`, and `123`. Seed 42 reuses the
+completed runs above. Run the two additional paired replications with:
+
+```bash
+uv run gsplat-learn phase6-run --scene all --condition both --seed 7
+uv run gsplat-learn phase6-run --scene all --condition both --seed 123
+```
+
+`--seed all` processes all configured seeds and skips valid completed artifacts. Batch
+commands launch each scene/condition in a fresh Python/CUDA process, preventing memory
+cache and allocator fragmentation from accumulating across the long experiment. Each
+new seed writes beneath
+`outputs/phase6_dtu_validation/seeds/seed_<seed>/<scene>/<condition>/`; all seeds reuse
+the same fixed image split and depth priors. With multiple seeds configured,
+`phase6-report` requires every configured run; run it after completion to
+write all 18 run metrics, all nine paired effects, per-scene mean and sample standard
+deviation, CSV summaries, and the mean-effect plot. Do not replicate the historical
+Phase 3 matrix.
+
 ## Four-week path
 
 ### Week 1 — camera and image formation

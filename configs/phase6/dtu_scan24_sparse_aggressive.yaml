@@ -1,0 +1,36 @@
+data:
+  colmap_dir: data/dtu/scan24/sparse/0
+  images_dir: data/dtu/scan24/images
+  depths_dir: data/dtu/scan24/depths
+  downscale: 2
+  train_image_ids: [3, 14, 32, 43]
+  test_image_ids: [1, 6, 11, 16, 21, 26, 31, 36, 41, 46]
+
+model:
+  sh_degree: 3
+  initial_opacity: 0.1
+  initial_scale: 0.01
+
+training:
+  iterations: 30000
+  learning_rate_position: 0.00016
+  learning_rate_features: 0.0025
+  learning_rate_opacity: 0.05
+  learning_rate_scale: 0.005
+  learning_rate_rotation: 0.001
+  densify_from: 500
+  densify_until: 15000
+  densify_every: 100
+  densify_gradient_threshold: 0.0005
+  densify_opacity_threshold: 0.005
+  densify_scale_threshold: 0.01
+  densify_max_screen_radius: 100.0
+  densify_max_gaussians: 250000
+  checkpoint_every: 100
+  seed: 42
+
+render:
+  backend: cuda
+  background: [0.0, 0.0, 0.0]
+
+output_dir: outputs/phase6_dtu_validation/scan24/rgb_only

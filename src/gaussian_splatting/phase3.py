@@ -7,7 +7,12 @@ from typing import Any
 
 import yaml
 
-from gaussian_splatting.config import ExperimentConfig, config_to_dict, load_config
+from gaussian_splatting.config import (
+    ExperimentConfig,
+    config_to_dict,
+    configs_match,
+    load_config,
+)
 from gaussian_splatting.data.colmap import load_colmap_scene
 from gaussian_splatting.plotting import plot_run
 from gaussian_splatting.training.evaluation import evaluate_checkpoint
@@ -117,6 +122,11 @@ def _resolve_config_paths(
             depths_dir=(
                 _resolve_path(base_dir, config.data.depths_dir)
                 if config.data.depths_dir is not None
+                else None
+            ),
+            depth_priors_dir=(
+                _resolve_path(base_dir, config.data.depth_priors_dir)
+                if config.data.depth_priors_dir is not None
                 else None
             ),
         ),
@@ -241,7 +251,7 @@ def _validate_run_state(config: ExperimentConfig) -> bool:
                 f"completed checkpoint is missing run metadata: {metadata_path}"
             )
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if metadata.get("config") != config_to_dict(config):
+        if not configs_match(metadata.get("config"), config_to_dict(config)):
             raise ValueError(
                 f"completed checkpoint config does not match: {config.output_dir}"
             )
@@ -250,7 +260,7 @@ def _validate_run_state(config: ExperimentConfig) -> bool:
         if not state_path.is_file():
             raise ValueError(f"resume checkpoint is missing run state: {state_path}")
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        if state.get("config") != config_to_dict(config):
+        if not configs_match(state.get("config"), config_to_dict(config)):
             raise ValueError(f"resume checkpoint config does not match: {config.output_dir}")
         return False
     if config.output_dir.is_dir() and any(config.output_dir.iterdir()):
@@ -361,7 +371,7 @@ def _read_run_metrics(name: str, config: ExperimentConfig) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"Phase 3 metrics do not exist for {name}: {path}")
     metrics = json.loads(path.read_text(encoding="utf-8"))
-    if metrics.get("config") != config_to_dict(config):
+    if not configs_match(metrics.get("config"), config_to_dict(config)):
         raise ValueError(f"stored evaluation config does not match {name}")
     expected_train_ids = list(config.data.train_image_ids)
     expected_test_ids = list(config.data.test_image_ids)

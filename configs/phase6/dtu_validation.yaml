@@ -1,0 +1,18 @@
+base_dir: ../..
+output_dir: outputs/phase6_dtu_validation
+depth_model: depth-anything/Depth-Anything-V2-Small-hf
+training_seeds: [42, 7, 123]
+selection:
+  test_count: 10
+  sparse_fraction: 0.1
+  sparse_seed: 42
+scenes:
+  scan63:
+    rgb: ../phase3/dtu_scan63_sparse_aggressive.yaml
+    depth: ../phase4/dtu_scan63_sparse_aggressive_depth.yaml
+  scan24:
+    rgb: dtu_scan24_sparse_aggressive.yaml
+    depth: dtu_scan24_sparse_aggressive_depth.yaml
+  scan110:
+    rgb: dtu_scan110_sparse_aggressive.yaml
+    depth: dtu_scan110_sparse_aggressive_depth.yaml

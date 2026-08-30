@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ class DataConfig:
     images_dir: Path
     downscale: int = 1
     depths_dir: Path | None = None
+    depth_priors_dir: Path | None = None
     train_image_ids: tuple[int, ...] = ()
     test_image_ids: tuple[int, ...] = ()
     holdout_image_ids: tuple[int, ...] = ()
@@ -40,6 +42,9 @@ class TrainingConfig:
     densify_max_screen_radius: float = 100.0
     densify_max_gaussians: int | None = None
     checkpoint_every: int = 0
+    depth_loss_weight: float = 0.0
+    depth_loss_beta: float = 0.1
+    depth_loss_alpha_threshold: float = 0.1
     seed: int = 42
 
 
@@ -90,6 +95,26 @@ def config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
     return convert(asdict(config))
 
 
+_COMPATIBLE_CONFIG_DEFAULTS = {
+    ("data", "depth_priors_dir"): None,
+    ("training", "depth_loss_weight"): 0.0,
+    ("training", "depth_loss_beta"): 0.1,
+    ("training", "depth_loss_alpha_threshold"): 0.1,
+}
+
+
+def configs_match(stored: Any, current: dict[str, Any]) -> bool:
+    """Compare persisted configs while tolerating newly added defaulted fields."""
+    if not isinstance(stored, dict):
+        return False
+    normalized = deepcopy(stored)
+    for (section, name), default in _COMPATIBLE_CONFIG_DEFAULTS.items():
+        values = normalized.get(section)
+        if isinstance(values, dict) and name not in values:
+            values[name] = default
+    return normalized == current
+
+
 def load_config(path: Path) -> ExperimentConfig:
     with path.open(encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
@@ -108,6 +133,7 @@ def load_config(path: Path) -> ExperimentConfig:
             "images_dir",
             "downscale",
             "depths_dir",
+            "depth_priors_dir",
             "train_image_ids",
             "test_image_ids",
             "holdout_image_ids",
@@ -156,6 +182,11 @@ def load_config(path: Path) -> ExperimentConfig:
         depths_dir=(
             Path(data_values["depths_dir"])
             if data_values.get("depths_dir") is not None
+            else None
+        ),
+        depth_priors_dir=(
+            Path(data_values["depth_priors_dir"])
+            if data_values.get("depth_priors_dir") is not None
             else None
         ),
         train_image_ids=train_image_ids,

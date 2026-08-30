@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -6,6 +7,14 @@ import torch
 from torch.optim import Optimizer
 
 from gaussian_splatting.model import GaussianModel
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def save_checkpoint(
@@ -17,16 +26,20 @@ def save_checkpoint(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(path.suffix + ".tmp")
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "step": step,
-            "metadata": metadata or {},
-        },
-        temporary_path,
-    )
+    with temporary_path.open("wb") as stream:
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "step": step,
+                "metadata": metadata or {},
+            },
+            stream,
+        )
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary_path.replace(path)
+    _fsync_directory(path.parent)
 
 
 def load_checkpoint(

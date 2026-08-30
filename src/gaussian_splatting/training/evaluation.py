@@ -6,12 +6,12 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 from torch import nn
 
 from gaussian_splatting.config import ExperimentConfig, config_to_dict
 from gaussian_splatting.data.colmap import load_colmap_scene
+from gaussian_splatting.image_sampling import sample_image_at_coordinates
 from gaussian_splatting.metrics import psnr
 from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.rendering.cuda_backend import CudaRasterizer
@@ -86,30 +86,6 @@ def _load_sparse_depth(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _sample_image_at_coordinates(
-    image: torch.Tensor,
-    coordinates: torch.Tensor,
-    source_width: int,
-    source_height: int,
-) -> torch.Tensor:
-    """Sample using source-image coordinates whose pixel centers are half-integers."""
-    normalized = torch.stack(
-        [
-            2.0 * coordinates[:, 0] / source_width - 1.0,
-            2.0 * coordinates[:, 1] / source_height - 1.0,
-        ],
-        dim=-1,
-    )
-    grid = normalized.reshape(1, 1, -1, 2)
-    return F.grid_sample(
-        image[None, None],
-        grid,
-        mode="bilinear",
-        padding_mode="zeros",
-        align_corners=False,
-    )[0, 0, 0]
-
-
 def sparse_depth_metrics(
     rendered_depth: torch.Tensor,
     alpha: torch.Tensor,
@@ -146,13 +122,13 @@ def sparse_depth_metrics(
 
     with Image.open(camera.image_path) as source_image:
         source_width, source_height = source_image.size
-    sampled_depth = _sample_image_at_coordinates(
+    sampled_depth = sample_image_at_coordinates(
         rendered_depth,
         coordinates,
         source_width,
         source_height,
     )
-    sampled_alpha = _sample_image_at_coordinates(
+    sampled_alpha = sample_image_at_coordinates(
         alpha,
         coordinates,
         source_width,

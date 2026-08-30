@@ -15,6 +15,7 @@ from gaussian_splatting.config import (
     RenderConfig,
 )
 from gaussian_splatting.data.colmap import ColmapScene
+from gaussian_splatting.image_sampling import sample_image_at_coordinates
 from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.training import evaluation
 from gaussian_splatting.training.checkpoint import save_checkpoint
@@ -114,7 +115,7 @@ def test_depth_sampling_uses_half_integer_pixel_centers() -> None:
     image = torch.arange(12, dtype=torch.float32).reshape(3, 4)
     coordinates = torch.tensor([[0.5, 0.5], [2.5, 1.5], [3.5, 2.5]])
 
-    sampled = evaluation._sample_image_at_coordinates(
+    sampled = sample_image_at_coordinates(
         image,
         coordinates,
         source_width=4,

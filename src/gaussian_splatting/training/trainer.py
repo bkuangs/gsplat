@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import time
 from dataclasses import asdict
@@ -7,20 +8,25 @@ from typing import Any
 
 import torch
 
-from gaussian_splatting.config import ExperimentConfig, config_to_dict
+from gaussian_splatting.config import ExperimentConfig, config_to_dict, configs_match
 from gaussian_splatting.data.colmap import load_colmap_scene
 from gaussian_splatting.model import GaussianModel
 from gaussian_splatting.rendering.cuda_backend import CudaRasterizer
 from gaussian_splatting.rendering.torch_backend import TorchRasterizer
-from gaussian_splatting.training.checkpoint import load_checkpoint, save_checkpoint
+from gaussian_splatting.training.checkpoint import (
+    _fsync_directory,
+    load_checkpoint,
+    save_checkpoint,
+)
 from gaussian_splatting.training.densification import (
     DensificationStats,
     accumulate_densification_stats,
     create_densification_stats,
     update_gaussian_topology,
 )
+from gaussian_splatting.training.depth_prior import load_depth_priors
 from gaussian_splatting.training.evaluation import evaluate_holdout
-from gaussian_splatting.training.losses import photometric_loss
+from gaussian_splatting.training.losses import depth_prior_loss, photometric_loss
 from gaussian_splatting.training.splits import (
     partition_camera_indices as _partition_camera_indices,
 )
@@ -45,11 +51,12 @@ def _build_optimizer(
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     temporary_path = path.with_suffix(path.suffix + ".tmp")
-    temporary_path.write_text(
-        json.dumps(value, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    with temporary_path.open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps(value, indent=2) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary_path.replace(path)
+    _fsync_directory(path.parent)
 
 
 def _truncate_training_log(path: Path, step: int) -> None:
@@ -76,6 +83,7 @@ def _checkpoint_metadata(
     initial_holdout: dict[str, Any] | None,
     training_image_ids: list[int | None],
     test_image_ids: list[int | None],
+    depth_prior_provenance: dict[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "config": config_to_dict(config),
@@ -95,6 +103,7 @@ def _checkpoint_metadata(
         "initial_holdout": initial_holdout,
         "train_image_ids": training_image_ids,
         "test_image_ids": test_image_ids,
+        "depth_prior_provenance": depth_prior_provenance,
     }
 
 
@@ -135,6 +144,21 @@ def train(config: ExperimentConfig) -> None:
         raise ValueError("training.densify_until must not precede densify_from")
     if config.training.checkpoint_every < 0:
         raise ValueError("training.checkpoint_every must be non-negative")
+    if config.training.depth_loss_weight < 0:
+        raise ValueError("training.depth_loss_weight must be non-negative")
+    if config.training.depth_loss_beta <= 0:
+        raise ValueError("training.depth_loss_beta must be positive")
+    if not 0.0 <= config.training.depth_loss_alpha_threshold <= 1.0:
+        raise ValueError(
+            "training.depth_loss_alpha_threshold must be between zero and one"
+        )
+    if (
+        config.training.depth_loss_weight > 0
+        and config.data.depth_priors_dir is None
+    ):
+        raise ValueError(
+            "data.depth_priors_dir is required when depth regularization is enabled"
+        )
 
     random.seed(config.training.seed)
     torch.manual_seed(config.training.seed)
@@ -176,6 +200,17 @@ def train(config: ExperimentConfig) -> None:
     test_image_ids = [
         scene.cameras[index].image_id for index in holdout_indices
     ]
+    depth_priors, depth_prior_provenance = (
+        load_depth_priors(
+            scene,
+            training_indices,
+            config.data.depth_priors_dir,
+            device,
+        )
+        if config.training.depth_loss_weight > 0
+        and config.data.depth_priors_dir is not None
+        else ({}, None)
+    )
     start_step = 0
     elapsed_before = 0.0
     initial_holdout: dict[str, Any] | None = None
@@ -185,12 +220,20 @@ def train(config: ExperimentConfig) -> None:
             optimizer_factory=lambda restored: _build_optimizer(restored, config),
             device=device,
         )
-        if resume_metadata.get("config") != config_to_dict(config):
+        if not configs_match(
+            resume_metadata.get("config"),
+            config_to_dict(config),
+        ):
             raise ValueError("resume checkpoint config does not match the requested run")
         if resume_metadata.get("train_image_ids") != training_image_ids:
             raise ValueError("resume checkpoint training split does not match")
         if resume_metadata.get("test_image_ids") != test_image_ids:
             raise ValueError("resume checkpoint test split does not match")
+        if (
+            resume_metadata.get("depth_prior_provenance")
+            != depth_prior_provenance
+        ):
+            raise ValueError("resume checkpoint depth priors do not match")
         if optimizer is None:
             raise RuntimeError("resume checkpoint did not restore an optimizer")
         stats = _restore_densification_stats(resume_metadata, model)
@@ -257,6 +300,7 @@ def train(config: ExperimentConfig) -> None:
                 initial_holdout,
                 training_image_ids,
                 test_image_ids,
+                depth_prior_provenance,
             ),
         )
     model.train()
@@ -272,7 +316,27 @@ def train(config: ExperimentConfig) -> None:
 
             optimizer.zero_grad(set_to_none=True)
             output = renderer(model, device_camera, config.render.background)
-            loss = photometric_loss(output.rgb, target)
+            rgb_loss = photometric_loss(output.rgb, target)
+            depth_loss = None
+            depth_coverage = None
+            if depth_priors:
+                if output.depth is None:
+                    raise RuntimeError("depth regularization requires renderer depth output")
+                prior = depth_priors[camera_index]
+                depth_loss, depth_coverage = depth_prior_loss(
+                    output.depth,
+                    output.alpha,
+                    prior.depth,
+                    prior.mask,
+                    alpha_threshold=config.training.depth_loss_alpha_threshold,
+                    beta=config.training.depth_loss_beta,
+                )
+                loss = (
+                    rgb_loss
+                    + config.training.depth_loss_weight * depth_loss
+                )
+            else:
+                loss = rgb_loss
             loss.backward()
             if step <= config.training.densify_until:
                 accumulate_densification_stats(
@@ -305,6 +369,11 @@ def train(config: ExperimentConfig) -> None:
             record = {
                 "step": step,
                 "loss": loss.item(),
+                "rgb_loss": rgb_loss.item(),
+                "depth_loss": (
+                    depth_loss.item() if depth_loss is not None else None
+                ),
+                "depth_prior_coverage": depth_coverage,
                 "gaussians": model.means.shape[0],
                 "image_id": camera.image_id,
             }
@@ -317,6 +386,7 @@ def train(config: ExperimentConfig) -> None:
             )
             if should_checkpoint:
                 log.flush()
+                os.fsync(log.fileno())
                 checkpoint_started = time.perf_counter()
                 elapsed = (
                     elapsed_before
@@ -336,6 +406,7 @@ def train(config: ExperimentConfig) -> None:
                         initial_holdout,
                         training_image_ids,
                         test_image_ids,
+                        depth_prior_provenance,
                     ),
                 )
                 _write_json(
@@ -405,6 +476,7 @@ def train(config: ExperimentConfig) -> None:
                 final_holdout["mean_psnr"] if final_holdout is not None else None
             ),
             "training_seconds": training_seconds,
+            "depth_prior_provenance": depth_prior_provenance,
         },
     )
     run_metadata = {
@@ -415,6 +487,7 @@ def train(config: ExperimentConfig) -> None:
         "train_image_ids": training_image_ids,
         "test_image_ids": test_image_ids,
         "checkpoint": str(config.output_dir / "final.pt"),
+        "depth_prior_provenance": depth_prior_provenance,
     }
     _write_json(config.output_dir / "run_metadata.json", run_metadata)
     _write_json(
@@ -427,3 +500,4 @@ def train(config: ExperimentConfig) -> None:
     )
     if resume_path.is_file():
         resume_path.unlink()
+        _fsync_directory(resume_path.parent)

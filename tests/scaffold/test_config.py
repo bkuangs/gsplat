@@ -84,3 +84,25 @@ def test_rejects_overlapping_train_test_ids(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="overlap"):
         load_config(config_path)
+
+
+def test_loads_depth_prior_training_configuration(tmp_path: Path) -> None:
+    config_path = tmp_path / "depth.yaml"
+    config_path.write_text(
+        "data:\n"
+        "  colmap_dir: sparse\n"
+        "  images_dir: images\n"
+        "  depth_priors_dir: priors\n"
+        "training:\n"
+        "  depth_loss_weight: 0.1\n"
+        "  depth_loss_beta: 0.2\n"
+        "  depth_loss_alpha_threshold: 0.01\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.data.depth_priors_dir == Path("priors")
+    assert config.training.depth_loss_weight == 0.1
+    assert config.training.depth_loss_beta == 0.2
+    assert config.training.depth_loss_alpha_threshold == 0.01
