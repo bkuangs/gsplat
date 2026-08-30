@@ -1,30 +1,10 @@
-# 3D Gaussian Splatting, From the Math Up
+# Sparse-View 3D Gaussian Splatting
 
-An educational implementation of 3D Gaussian Splatting (3DGS) aimed at graphics and
-computer-vision learning. The repository includes a readable PyTorch reference
+An educational implementation of the 3D Gaussian Splatting (3DGS) pipeline, as well as a
+small extension experiment relating to sparse-view rendering. The repository includes a readable PyTorch reference
 renderer and an adapter for the optimized `gsplat` CUDA backend.
 
-The target demo is a trained scene and smooth novel-view video from images registered
-by COLMAP. A readable PyTorch renderer establishes correctness; the external
-[`gsplat`](https://github.com/nerfstudio-project/gsplat) CUDA backend makes full-scene
-training practical.
-
-## What you implement
-
-| Area | Your implementation | Scaffolded for you |
-| --- | --- | --- |
-| Geometry | Pinhole projection, 3D covariance, covariance projection | Camera types and validation |
-| Representation | Local-spacing initialization, SH features, parameter activations | Typed `nn.Module` parameter container |
-| Rendering | PyTorch splatting, visibility, sorting, alpha compositing, expected depth | CUDA backend adapter |
-| Learning | Photometric loss, optimizer groups, training loop | Config and checkpoint I/O |
-| Density control | Gradient statistics, clone/split/prune, optimizer-state updates | Scheduling fields and data types |
-| Data and output | COLMAP loading, image sampling, training logs | Metrics and CLI |
-
-This split is intentional. Writing another COLMAP parser, argument framework, or
-checkpoint format adds little interview value. Deriving covariance projection and
-debugging differentiable compositing does.
-
-## Learning goals
+### Learning Outcomes
 
 By completion, you should be able to:
 
@@ -36,32 +16,20 @@ By completion, you should be able to:
 5. Validate a readable reference implementation against an optimized CUDA operator.
 6. Diagnose camera-convention, coordinate-system, visibility, and numerical-stability bugs.
 
-## Representation conventions
+## Layout
 
-- Quaternions use WXYZ component order throughout the model and both renderers; identity
-  is `[1, 0, 0, 0]`.
-- Both rasterizers receive an explicit active SH degree. Stored coefficient tensors may
-  contain additional bands, but renderers evaluate only the configured active degree.
-- Checkpoint loading reconstructs the saved model shape and device before creating and
-  restoring its optimizer.
+| Theory | Implement | Scaffolded |
+| --- | --- | --- |
+| Geometry | Pinhole projection, 3D covariance, covariance projection | Camera types and validation |
+| Representation | Local-spacing initialization, SH features, parameter activations | Typed `nn.Module` parameter container |
+| Rendering | PyTorch splatting, visibility, sorting, alpha compositing, expected depth | CUDA backend adapter |
+| Learning | Photometric loss, optimizer groups, training loop | Config and checkpoint I/O |
+| Density control | Gradient statistics, clone/split/prune, optimizer-state updates | Scheduling fields and data types |
+| Data and output | COLMAP loading, image sampling, training logs | Metrics and CLI |
 
-### Image and render tensor contract
-
-- Each `Camera` represents one unbatched image. Its `width` and `height` are the exact
-  target dimensions after applying the configured downscale.
-- The image loader converts source images to three-channel RGB, resizes them to
-  `(width, height)`, and returns contiguous `torch.float32` tensors with shape
-  `(3, height, width)` and values in `[0, 1]`.
-- Image values remain in their encoded RGB color space; loading does not apply gamma or
-  color-space conversion beyond conversion to RGB.
-- Both renderers return unbatched RGB with shape `(3, height, width)` and alpha with
-  shape `(1, height, width)`. Optional depth uses shape `(1, height, width)`.
-- Renderers use the model's floating-point dtype and device. Ground-truth images move
-  to that device before loss evaluation.
-- Renderer RGB is not silently clamped during training. Evaluation may clamp to
-  `[0, 1]` before computing display-oriented metrics.
-- HWC layout exists only at external-library boundaries; adapters convert it to CHW
-  before constructing `RenderOutput`.
+This split is intentional. Writing another COLMAP parser, argument framework, or
+checkpoint format adds little value. Deriving covariance projection and
+debugging differentiable compositing does.
 
 ## Setup
 
@@ -73,35 +41,22 @@ uv run gsplat-learn status
 uv run pytest
 ```
 
-On a Linux NVIDIA training machine, install the optimized backend too. The CUDA extra
-includes the compiler toolchain matching the pinned PyTorch build, so it does not use a
-possibly incompatible system `nvcc`.
+## Evaluation
 
-```bash
-uv sync --extra dev --extra data --extra cuda --extra video
-```
+- **PSNR:** Pixel-level similarity to the target image; higher is better.
+- **LPIPS:** Perceptual image difference; lower is better.
+- **Depth AbsRel:** Average relative error between rendered and reference camera-space
+  depth; lower is better. An AbsRel of `0.06` is roughly 6% relative depth error.
+- **Train-test PSNR gap:** Difference between training-view and held-out-view quality;
+  a large gap is evidence of overfitting.
 
-Run COLMAP externally, then point `configs/baseline.yaml` at its sparse model and image
-directory:
+## Experiment Phases
 
-```bash
-uv run gsplat-learn inspect-colmap --config configs/baseline.yaml
-```
+### Phase 1: Establish trainable baseline
 
-The `train` command supports both backends and records per-step loss and Gaussian count
-to `training.jsonl` in the configured output directory. Densification steps also record
-the numbers cloned, split, and pruned, together with the topology size before and after.
+**Purpose:** Implement the theory from scratch for learning purposes, then verify that each moving part (projection, covariance, compositing, optimization, adaptive clone/split/prune) of the pipeline workds before running experiments.
 
-Define reusable camera splits with `data.train_image_ids` and `data.test_image_ids`.
-The earlier `data.holdout_image_ids` form remains supported as a shorthand for using
-all other cameras for training. Training writes initial and final RGB, alpha, depth,
-and PSNR evidence under the run's `holdout/` directory:
-
-```bash
-uv run gsplat-learn train --config configs/dtu_scan63_holdout.yaml
-```
-
-The final Phase 1 acceptance checks are intentionally small:
+To move on, we test that 50-fold loss reduction and 45 dB PSNR work on a synthetic scene:
 
 ```bash
 uv run pytest -q -s \
@@ -109,131 +64,72 @@ uv run pytest -q -s \
 uv run gsplat-learn train --config configs/dtu_scan63_density_smoke.yaml
 ```
 
-The synthetic test requires a 50-fold loss reduction and 45 dB PSNR. The 20-step DTU
-smoke run performs one density-control update; its last `training.jsonl` record must
-contain nonzero clone, split-parent, split-child, and prune counts.
+**Result:** PyTorch implementation and CUDA backend share the
+same camera, image, rendering, and checkpoint contracts. The baseline can optimize a
+scene end to end and update its Gaussian topology during training.
 
-Install the Phase 2 metrics and plotting dependencies, evaluate a checkpoint on its
-fixed split, and create the run summary:
+### Phase 2: Make held-out quality measurable
+
+**Purpose:** Separate training-image fit from novel-view performance and add an
+independent depth measurement.
 
 ```bash
 uv sync --extra dev --extra data --extra cuda --extra evaluation
+uv run gsplat-learn train --config configs/dtu_scan63_holdout.yaml
 uv run gsplat-learn evaluate --config configs/dtu_scan63_holdout.yaml
 uv run gsplat-learn plot outputs/dtu_scan63_holdout
 ```
 
-Evaluation writes per-camera JSON/CSV metrics and train/test RGB, alpha, and depth
-renders under `outputs/dtu_scan63_holdout/evaluation/`.
+**Result:** Evaluation writes per-camera JSON/CSV metrics and aligned RGB, alpha, and
+depth renders under each run's `evaluation/` directory. This fixed evaluation path is
+used by every later comparison.
 
-To write evaluation artifacts elsewhere, pass the same directory to evaluation and
-plotting:
+### Phase 3: Sparse-view overfitting
 
-```bash
-uv run gsplat-learn evaluate \
-  --config configs/dtu_scan63_holdout.yaml \
-  --output-dir outputs/dtu_scan63_custom_evaluation
-uv run gsplat-learn plot \
-  outputs/dtu_scan63_holdout \
-  --evaluation-dir outputs/dtu_scan63_custom_evaluation
+**Purpose:** We aim to answer the question: *Does allowing the model to create more
+Gaussians improve reconstruction when only a few camera views are available—or does
+it encourage memorization?*
+
+We run four versions of the same experiment, varying only the number of training
+views and the densification setting. Everything else (initial 3D points, test cameras,
+optimizer, seed, and training duration) stays fixed. "Aggressive" densification lowers
+the threshold for adding Gaussians, giving the model more capacity to fit the images.
+
+| Training setup | Train PSNR | Held-out PSNR | Train-test gap | LPIPS | Final Gaussians |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 39 views, baseline (`0.001`) | 29.60 dB | 22.08 dB | 7.52 dB | 0.212 | 75.3K |
+| 39 views, aggressive (`0.0005`) | 35.00 dB | 28.57 dB | 6.44 dB | 0.118 | 206.1K |
+| 4 views, baseline (`0.001`) | 31.41 dB | 11.52 dB | 19.89 dB | 0.509 | 12.2K |
+| 4 views, aggressive (`0.0005`) | 38.40 dB | 10.17 dB | 28.23 dB | 0.521 | 31.9K |
+
+With 39 views, aggressive densification improves both the training and held-out
+renders. With only four views, it raises training PSNR by **6.99 dB** but lowers
+held-out PSNR by **1.34 dB**. At the same time, the train-test gap grows by
+**8.34 dB** and the model creates **2.6 times** as many Gaussians. Training quality
+and unseen-view quality move in opposite directions, which is the clearest sign of
+memorization.
+
+**Result:** Phase 3 isolates sparse views plus aggressive densification as the failure
+case that depth guidance targets in Phases 4 and 5.
+
+### Phase 4: Add monocular depth
+
+**Purpose:** Give the sparse model an additional cue about how far scene content should
+be from each camera, without changing the renderer or densification schedule.
+
+Depth Anything V2 is used as an offline depth estimator; it is not retrained with the
+Gaussian model. It processes each training image once and predicts which parts of the
+image are closer to or farther from the camera. Because a single-image prediction does
+not know the scene's true scale, visible COLMAP points are used to align it with the
+3D reconstruction. Predictions that cannot be aligned reliably are rejected.
+
+The saved, aligned depth maps then become fixed training targets. The RGB loss still
+teaches the model what the scene should look like, while the added depth loss
+discourages it from placing scene content at implausible distances:
+
+```text
+total_loss = rgb_loss + 0.1 * smooth_l1(log(rendered_depth) - log(prior_depth))
 ```
-
-### Sparse depth evaluation contract
-
-Set `data.depths_dir` to a directory containing one `<image-stem>.pt` file per test
-image. Each file is a mapping with:
-
-- `image_name`: the exact source-image basename, including its extension.
-- `depth`: a one-dimensional array of positive camera-space z values, in the same
-  units as the COLMAP reconstruction. These values are not Euclidean ray distances.
-- `coord`: an `(N, 2)` array of `(x, y)` coordinates in the original source image,
-  before `data.downscale` is applied. Pixel `[y, x]` has center
-  `(x + 0.5, y + 0.5)`.
-- `error` and `weight` may be present for compatibility with DTU preprocessing but
-  are not used by the evaluator.
-
-Coordinates are normalized using the original source-image dimensions before sampling
-the rendered depth and alpha maps. Therefore, for a rendered image of size
-`(render_width, render_height)`, rendered pixel `[y, x]` is centered at source
-coordinate `((x + 0.5) * source_width / render_width,
-(y + 0.5) * source_height / render_height)`. This preserves spatial alignment when
-evaluation renders are downscaled.
-
-Depth AbsRel includes only finite, positive ground-truth samples whose rendered depth
-is finite and positive and whose rendered alpha exceeds `1e-4`. Depth coverage is the
-fraction of valid ground-truth samples meeting those prediction conditions. Missing
-training-view depth files leave depth metrics unavailable; a missing test-view file is
-an error.
-
-### Phase 3 sparse-view pilot
-
-`configs/phase3/dtu_scan63.yaml` defines the controlled four-run pilot on DTU scan63:
-
-| Run | Training cameras | Gradient threshold |
-| --- | ---: | ---: |
-| `full_baseline` | 39 | `0.001` |
-| `full_aggressive` | 39 | `0.0005` |
-| `sparse_baseline` | 4 | `0.001` |
-| `sparse_aggressive` | 4 | `0.0005` |
-
-All runs use seed 42 and the same ten held-out test cameras. The sparse cameras are a
-fixed stratified 10% subset (`3, 14, 32, 43`) of the ordered 39-camera training pool,
-selected with seed 42. Manifest validation reproduces that selection and rejects
-changes to any setting other than the training-camera subset, gradient threshold, and
-output directory. The model initialization remains the same COLMAP point cloud in all
-four conditions, so the sparse treatment changes photometric camera supervision rather
-than the initial geometric prior. All four runs use `data.downscale: 2` to keep the
-growing models within an 8 GB GPU budget. They also share a 250,000-Gaussian emergency
-ceiling. A 3,000-step calibration reached 24,576 Gaussians for baseline and 35,802 for
-aggressive, so the ceiling is intended as crash protection rather than an active
-treatment.
-
-Run the 500-step, quarter-resolution pre-flight first. It requires baseline density
-control to create clone/split additions and the aggressive threshold to create more:
-
-```bash
-uv run gsplat-learn phase3-preflight
-```
-
-The run command also performs or reuses this pre-flight before starting a full
-condition. Run each condition independently so an interrupted pilot does not discard
-completed work:
-
-```bash
-uv run gsplat-learn phase3-run --run full_baseline
-uv run gsplat-learn phase3-run --run full_aggressive
-uv run gsplat-learn phase3-run --run sparse_baseline
-uv run gsplat-learn phase3-run --run sparse_aggressive
-```
-
-`--run all` runs the same sequence in one process. A completed checkpoint is reused for
-evaluation only when its persisted config exactly matches the manifest. A non-empty
-output directory without a resumable checkpoint is rejected to avoid silently
-overwriting a partial experiment, and all selected output directories are checked
-before training begins. Phase 3 saves `latest.pt` every 100 steps, including optimizer,
-random-number, elapsed-time, and densification state. Re-run the same command after an
-interruption to resume from that checkpoint; successful completion replaces it with
-`final.pt`.
-
-After all four conditions finish, aggregate the controlled comparison:
-
-```bash
-uv run gsplat-learn phase3-report
-```
-
-This writes `phase3_metrics.json`, `phase3_metrics.csv`, and `phase3_summary.png` under
-`outputs/phase3_dtu_scan63/`. The report includes train/test PSNR, the PSNR gap, test
-LPIPS, test depth AbsRel and coverage, final Gaussian count, training time, and the
-aggressive-minus-baseline effect at each supervision level. It also records whether a
-run reached the shared Gaussian safety ceiling; a saturated condition must be
-interpreted as budget-limited. Because AbsRel excludes
-samples below the alpha threshold, compare its effect jointly with the coverage effect;
-different runs may cover different depth samples.
-
-### Phase 4 aligned monocular depth
-
-Phase 4 adds exactly one training intervention to the failing sparse-aggressive
-condition: a robust loss against fixed, COLMAP-aligned monocular depth. Install the
-generator dependency and produce priors for the four training cameras:
 
 ```bash
 uv sync --extra dev --extra data --extra cuda --extra evaluation --extra depth
@@ -241,32 +137,16 @@ uv run gsplat-learn generate-depth-priors \
   --config configs/phase4/dtu_scan63_sparse_aggressive_depth.yaml
 ```
 
-The generator uses the frozen
-`depth-anything/Depth-Anything-V2-Small-hf` relative-depth model. For each training
-camera it:
+**Result:** Phase 4 produces one validated depth map for each sparse training view.
+These maps act as geometric guardrails in Phase 5: the Gaussian model can no longer
+improve its color match as easily by putting content at the wrong depth. The depth
+estimator and its saved predictions remain fixed, so the next experiment isolates the
+effect of adding depth guidance.
 
-1. Predicts a dense relative inverse-depth map once.
-2. Samples that prediction at the camera's recorded COLMAP observations.
-3. Computes camera-space z for the corresponding COLMAP points.
-4. Robustly fits scale and shift to COLMAP inverse depth.
-5. Rejects alignments with fewer than 20 valid anchors, non-positive inverse depth on
-   more than 10% of anchors, or median anchor AbsRel above 0.25.
-6. Saves the aligned depth, valid mask, visualization, fit statistics, and checksum.
+### Phase 5: Test the intervention on the failing condition
 
-Priors are written to `outputs/phase4_dtu_scan63/depth_priors/`. Training verifies
-their image IDs, names, dimensions, split, checksums, source RGB content, camera
-matrices, and COLMAP alignment anchors, and persists their complete provenance in
-checkpoints. Regenerating, modifying, or applying priors to changed scene data cannot
-silently alter a resumed experiment.
-
-The configured loss is:
-
-```text
-total_loss = rgb_loss + 0.1 * smooth_l1(log(rendered_depth) - log(prior_depth))
-```
-
-It applies only where the aligned prior is valid, rendered depth is finite and
-positive, and rendered alpha exceeds 0.1. Run the intervention with:
+**Purpose:** Compare RGB-only training with RGB + depth on the sparse,
+aggressively densified scan63 condition identified in Phase 3.
 
 ```bash
 uv run gsplat-learn train \
@@ -276,140 +156,51 @@ uv run gsplat-learn evaluate \
 uv run gsplat-learn plot outputs/phase4_dtu_scan63/sparse_aggressive_depth
 ```
 
-`training.jsonl` records total loss, RGB loss, depth loss, and prior coverage. Phase 5
-compares this run directly with the completed Phase 3 `sparse_aggressive` RGB-only
-condition.
+| Metric | RGB only | RGB + Depth | Change |
+| --- | ---: | ---: | ---: |
+| Held-out PSNR | 10.17 dB | 11.94 dB | **+1.77 dB** |
+| LPIPS | 0.5215 | 0.4635 | **-0.0580** |
+| Depth AbsRel | 0.0672 | 0.0608 | **-9.6%** |
+| Train-test PSNR gap | 28.23 dB | 23.70 dB | **-4.52 dB** |
+| Final Gaussians | 31.9K | 29.2K | **-2.6K** |
 
-### Phase 6 three-scene validation
+**Result:** Depth guidance improves held-out depth and appearance while reducing the
+generalization gap, without relying on a larger model.
 
-Phase 6 tests whether the positive scan63 intervention transfers to DTU scan24 and
-scan110. It keeps the same optimizer, aggressive `0.0005` densification
-threshold, depth-loss settings, downscale, Gaussian ceiling, and ten-camera
-deterministic test split. The only within-scene treatment difference remains RGB-only
-versus RGB plus aligned monocular depth.
+### Phase 6: Validate across scenes and seeds
 
-The fixed sparse training cameras are:
-
-| Scene | Sparse training IDs | Held-out test IDs |
-| --- | --- | --- |
-| scan24 | `3, 14, 32, 43` | `1, 6, 11, 16, 21, 26, 31, 36, 41, 46` |
-| scan63 | `3, 14, 32, 43` | `1, 6, 11, 16, 21, 26, 31, 36, 41, 46` |
-| scan110 | `13, 16, 27, 45, 57` | `1, 8, 15, 22, 29, 35, 41, 47, 53, 59` |
-
-Generate the new priors, then run each paired comparison independently:
+**Purpose:** The final experiment compares RGB-only and depth-guided training on DTU
+scans 24, 63, and 110 with random seeds 42, 7, and 123.
 
 ```bash
-uv run gsplat-learn phase6-priors --scene scan24
-uv run gsplat-learn phase6-run --scene scan24 --condition rgb
-uv run gsplat-learn phase6-run --scene scan24 --condition depth
-
-uv run gsplat-learn phase6-priors --scene scan110
-uv run gsplat-learn phase6-run --scene scan110 --condition rgb
-uv run gsplat-learn phase6-run --scene scan110 --condition depth
-```
-
-`phase6-run --scene <scene>` runs both conditions and automatically generates or
-validates the required priors. Completed scan63 Phase 3 and Phase 4 artifacts are
-reused even though their persisted paths use different relative/absolute forms.
-Interrupted new runs resume from their 100-step recovery checkpoints.
-
-The original seed-42 comparison can be summarized with:
-
-```bash
+uv run gsplat-learn phase6-run --scene all --condition both --seed all
 uv run gsplat-learn phase6-report
 ```
 
-Positive test-PSNR effects and negative LPIPS, depth-AbsRel, and train-test-gap effects
-favor depth guidance.
+The table reports the mean depth-guided effect and sample standard deviation across
+three seeds. Positive PSNR and negative LPIPS and AbsRel favor depth guidance.
 
-The manifest also defines training seeds `42`, `7`, and `123`. Seed 42 reuses the
-completed runs above. Run the two additional paired replications with:
+| Scene | Test PSNR | LPIPS | Depth AbsRel |
+| --- | ---: | ---: | ---: |
+| scan63 | **+1.617 +/- 0.467 dB** | **-0.0583 +/- 0.0130** | **-0.0123 +/- 0.0052** |
+| scan24 | **+0.322 +/- 0.694 dB** | **-0.0049 +/- 0.0148** | **-0.0015 +/- 0.0006** |
+| scan110 | **+1.267 +/- 1.348 dB** | **-0.0308 +/- 0.0111** | **-0.0036 +/- 0.0009** |
 
-```bash
-uv run gsplat-learn phase6-run --scene all --condition both --seed 7
-uv run gsplat-learn phase6-run --scene all --condition both --seed 123
-```
+Across the nine scene-seed comparisons, depth guidance improves Depth AbsRel in **9/9**
+runs, held-out PSNR in **8/9**, and LPIPS in **7/9**. Scan63 has the strongest and most
+stable benefit. Scan110 improves consistently but with variable PSNR gains. Scan24 has
+a small depth benefit and weaker, seed-sensitive appearance changes.
 
-`--seed all` processes all configured seeds and skips valid completed artifacts. Batch
-commands launch each scene/condition in a fresh Python/CUDA process, preventing memory
-cache and allocator fragmentation from accumulating across the long experiment. Each
-new seed writes beneath
-`outputs/phase6_dtu_validation/seeds/seed_<seed>/<scene>/<condition>/`; all seeds reuse
-the same fixed image split and depth priors. With multiple seeds configured,
-`phase6-report` requires every configured run; run it after completion to
-write all 18 run metrics, all nine paired effects, per-scene mean and sample standard
-deviation, CSV summaries, and the mean-effect plot. Do not replicate the historical
-Phase 3 matrix.
+![Representative held-out RGB-only and depth-guided renders](docs/assets/depth_guidance_render_comparison.png)
 
-## Four-week path
+The figure shows held-out views near each scene's median PSNR
+improvement. Depth guidance often improves
+the whole-image metrics, but it does not make every object region look better; scan63
+still contains strong stretching and smearing artifacts.
 
-### Week 1 — camera and image formation
+### Conclusion
 
-- Implement `math/projection.py` and `rendering/compositing.py`.
-- Remove the skip from `tests/student/test_milestone_1_math.py`.
-- Render a handful of fixed, isotropic Gaussians on a tiny synthetic image.
-- Write down coordinate conventions before debugging them.
-
-**Exit criterion:** analytic tests pass and gradients are finite.
-
-### Week 2 — reference renderer
-
-- Initialize `GaussianModel` from COLMAP points and colors.
-- Implement view-dependent SH color evaluation.
-- Build the PyTorch rasterizer: cull, bound, depth-sort, evaluate, composite.
-- Favor simple vectorized or tiled code over premature optimization.
-
-**Exit criterion:** a tiny scene renders correctly and parameters receive gradients.
-
-### Week 3 — optimization
-
-- Implement L1 + SSIM, parameter-specific optimizer groups, data sampling, and training.
-- Save checkpoints and report held-out PSNR.
-- Compare small-scene outputs and gradients between PyTorch and CUDA backends.
-
-**Exit criterion:** a real scene improves visibly and numerically during training.
-
-### Week 4 — adaptive density and portfolio proof
-
-- Accumulate screen-space position gradients and implement clone/split/prune.
-- Add a deterministic novel-view camera path and MP4 export.
-- Record ablations: no densification, isotropic covariance, SH degree 0 versus 3.
-- Add final renders, a system diagram, results table, and lessons learned to this README.
-
-**Exit criterion:** one reproducible command trains the chosen scene and another renders
-the portfolio video.
-
-## Repository map
-
-```text
-configs/                         experiment configuration
-docs/ideas/gsplat.md             scope and assumptions
-src/gaussian_splatting/
-  data/colmap.py                 prebuilt COLMAP adapter
-  math/projection.py             projection and covariance math
-  model/gaussians.py             point-cloud initialization
-  rendering/
-    compositing.py               alpha compositing
-    torch_backend.py             reference rasterizer
-    cuda_backend.py              prebuilt optimized-backend adapter
-  training/
-    checkpoint.py               prebuilt checkpoint I/O
-    losses.py                    photometric objective
-    densification.py            adaptive density control
-    trainer.py                  optimization loop
-tests/scaffold/                  tests for provided infrastructure
-tests/student/                   skipped acceptance tests to unlock by milestone
-```
-
-## Resume-ready evidence
-
-Do not describe this only as “implemented 3DGS.” Preserve evidence:
-
-- side-by-side ground truth, PyTorch, and CUDA renders;
-- PSNR and timing comparisons on a fixed scene;
-- an ablation table for anisotropy, SH degree, and densification;
-- profiler screenshots or traces explaining the reference renderer bottleneck;
-- a short section on one hard bug and the invariant/test that found it.
-
-Those artifacts show graphics reasoning and experimental discipline better than a
-feature checklist.
+The experiment shows that aligned monocular depth
+regularization consistently improves held-out sparse-depth accuracy and usually
+improves novel-view appearance under sparse camera supervision. It does not yet
+establish better complete-surface geometry.
