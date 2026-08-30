@@ -1,9 +1,6 @@
-import pytest
 import torch
 
 from gaussian_splatting.training.losses import photometric_loss
-
-pytestmark = pytest.mark.skip(reason="TODO(student): remove after implementing milestone 3")
 
 
 def test_photometric_loss_is_zero_for_identical_images() -> None:
@@ -18,4 +15,3 @@ def test_photometric_loss_backpropagates() -> None:
     photometric_loss(prediction, target).backward()
     assert prediction.grad is not None
     assert torch.isfinite(prediction.grad).all()
-

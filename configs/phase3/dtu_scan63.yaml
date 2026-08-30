@@ -1,0 +1,11 @@
+base_dir: ../..
+output_dir: outputs/phase3_dtu_scan63
+sparse_selection:
+  method: stratified
+  fraction: 0.1
+  seed: 42
+runs:
+  full_baseline: dtu_scan63_full_baseline.yaml
+  full_aggressive: dtu_scan63_full_aggressive.yaml
+  sparse_baseline: dtu_scan63_sparse_baseline.yaml
+  sparse_aggressive: dtu_scan63_sparse_aggressive.yaml

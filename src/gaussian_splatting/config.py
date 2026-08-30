@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,11 @@ class DataConfig:
     colmap_dir: Path
     images_dir: Path
     downscale: int = 1
+    depths_dir: Path | None = None
+    depth_priors_dir: Path | None = None
+    train_image_ids: tuple[int, ...] = ()
+    test_image_ids: tuple[int, ...] = ()
+    holdout_image_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,15 @@ class TrainingConfig:
     densify_from: int = 500
     densify_until: int = 15_000
     densify_every: int = 100
+    densify_gradient_threshold: float = 0.0002
+    densify_opacity_threshold: float = 0.005
+    densify_scale_threshold: float = 0.01
+    densify_max_screen_radius: float = 100.0
+    densify_max_gaussians: int | None = None
+    checkpoint_every: int = 0
+    depth_loss_weight: float = 0.0
+    depth_loss_beta: float = 0.1
+    depth_loss_alpha_threshold: float = 0.1
     seed: int = 42
 
 
@@ -55,6 +70,51 @@ def _reject_unknown(values: dict[str, Any], allowed: set[str], section: str) -> 
         raise ValueError(f"unknown {section} configuration field(s): {names}")
 
 
+def _image_ids(values: dict[str, Any], name: str) -> tuple[int, ...]:
+    raw = values.get(name, [])
+    if not isinstance(raw, list):
+        raise ValueError(f"data.{name} must be a list")
+    image_ids = tuple(int(value) for value in raw)
+    if len(set(image_ids)) != len(image_ids):
+        raise ValueError(f"data.{name} must not contain duplicates")
+    return image_ids
+
+
+def config_to_dict(config: ExperimentConfig) -> dict[str, Any]:
+    """Convert an experiment config into a JSON-serializable mapping."""
+
+    def convert(value: Any) -> Any:
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {key: convert(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [convert(item) for item in value]
+        return value
+
+    return convert(asdict(config))
+
+
+_COMPATIBLE_CONFIG_DEFAULTS = {
+    ("data", "depth_priors_dir"): None,
+    ("training", "depth_loss_weight"): 0.0,
+    ("training", "depth_loss_beta"): 0.1,
+    ("training", "depth_loss_alpha_threshold"): 0.1,
+}
+
+
+def configs_match(stored: Any, current: dict[str, Any]) -> bool:
+    """Compare persisted configs while tolerating newly added defaulted fields."""
+    if not isinstance(stored, dict):
+        return False
+    normalized = deepcopy(stored)
+    for (section, name), default in _COMPATIBLE_CONFIG_DEFAULTS.items():
+        values = normalized.get(section)
+        if isinstance(values, dict) and name not in values:
+            values[name] = default
+    return normalized == current
+
+
 def load_config(path: Path) -> ExperimentConfig:
     with path.open(encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
@@ -66,7 +126,20 @@ def load_config(path: Path) -> ExperimentConfig:
         raise ValueError("configuration requires a data mapping")
 
     data_values = raw["data"]
-    _reject_unknown(data_values, {"colmap_dir", "images_dir", "downscale"}, "data")
+    _reject_unknown(
+        data_values,
+        {
+            "colmap_dir",
+            "images_dir",
+            "downscale",
+            "depths_dir",
+            "depth_priors_dir",
+            "train_image_ids",
+            "test_image_ids",
+            "holdout_image_ids",
+        },
+        "data",
+    )
     if "colmap_dir" not in data_values or "images_dir" not in data_values:
         raise ValueError("data requires colmap_dir and images_dir")
 
@@ -89,10 +162,36 @@ def load_config(path: Path) -> ExperimentConfig:
     if len(background) != 3:
         raise ValueError("render.background must have exactly three values")
 
+    train_image_ids = _image_ids(data_values, "train_image_ids")
+    test_image_ids = _image_ids(data_values, "test_image_ids")
+    holdout_image_ids = _image_ids(data_values, "holdout_image_ids")
+    if test_image_ids and holdout_image_ids:
+        raise ValueError(
+            "data.test_image_ids and data.holdout_image_ids cannot both be set"
+        )
+    evaluation_ids = test_image_ids or holdout_image_ids
+    overlap = sorted(set(train_image_ids) & set(evaluation_ids))
+    if overlap:
+        names = ", ".join(str(image_id) for image_id in overlap)
+        raise ValueError(f"training and test image IDs overlap: {names}")
+
     data = DataConfig(
         colmap_dir=Path(data_values["colmap_dir"]),
         images_dir=Path(data_values["images_dir"]),
         downscale=int(data_values.get("downscale", 1)),
+        depths_dir=(
+            Path(data_values["depths_dir"])
+            if data_values.get("depths_dir") is not None
+            else None
+        ),
+        depth_priors_dir=(
+            Path(data_values["depth_priors_dir"])
+            if data_values.get("depth_priors_dir") is not None
+            else None
+        ),
+        train_image_ids=train_image_ids,
+        test_image_ids=test_image_ids,
+        holdout_image_ids=holdout_image_ids,
     )
     if data.downscale < 1:
         raise ValueError("data.downscale must be at least 1")
@@ -111,4 +210,3 @@ def load_config(path: Path) -> ExperimentConfig:
         render=render,
         output_dir=Path(raw.get("output_dir", "outputs/default")),
     )
-

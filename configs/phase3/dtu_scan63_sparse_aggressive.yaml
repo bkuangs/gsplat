@@ -1,7 +1,10 @@
 data:
-  colmap_dir: data/example/sparse/0
-  images_dir: data/example/images
-  downscale: 1
+  colmap_dir: data/dtu/scan63/sparse/0
+  images_dir: data/dtu/scan63/images
+  depths_dir: data/dtu/scan63/depths
+  downscale: 2
+  train_image_ids: [3, 14, 32, 43]
+  test_image_ids: [1, 6, 11, 16, 21, 26, 31, 36, 41, 46]
 
 model:
   sh_degree: 3
@@ -18,14 +21,16 @@ training:
   densify_from: 500
   densify_until: 15000
   densify_every: 100
-  densify_gradient_threshold: 0.0002
+  densify_gradient_threshold: 0.0005
   densify_opacity_threshold: 0.005
   densify_scale_threshold: 0.01
   densify_max_screen_radius: 100.0
+  densify_max_gaussians: 250000
+  checkpoint_every: 100
   seed: 42
 
 render:
-  backend: torch
+  backend: cuda
   background: [0.0, 0.0, 0.0]
 
-output_dir: outputs/baseline
+output_dir: outputs/phase3_dtu_scan63/sparse_aggressive

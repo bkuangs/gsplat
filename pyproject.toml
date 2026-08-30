@@ -13,13 +13,27 @@ dependencies = [
   "numpy>=1.26",
   "pillow>=10.0",
   "pyyaml>=6.0",
-  "torch>=2.3",
+  "torch==2.13.0",
 ]
 
 [project.optional-dependencies]
 data = ["pycolmap>=3.10"]
-cuda = ["gsplat>=1.5"]
+cuda = [
+  "gsplat>=1.5",
+  "nvidia-cuda-cccl==13.0.85; sys_platform == 'linux'",
+  "nvidia-cuda-crt==13.0.88; sys_platform == 'linux'",
+  "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux'",
+  "nvidia-cuda-runtime==13.0.96; sys_platform == 'linux'",
+  "nvidia-nvvm==13.0.88; sys_platform == 'linux'",
+]
 video = ["imageio[ffmpeg]>=2.35"]
+evaluation = [
+  "lpips>=0.1.4",
+  "matplotlib>=3.9",
+]
+depth = [
+  "transformers>=4.57,<5",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
@@ -28,7 +42,15 @@ dev = [
 all = [
   "pycolmap>=3.10",
   "gsplat>=1.5",
+  "nvidia-cuda-cccl==13.0.85; sys_platform == 'linux'",
+  "nvidia-cuda-crt==13.0.88; sys_platform == 'linux'",
+  "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux'",
+  "nvidia-cuda-runtime==13.0.96; sys_platform == 'linux'",
+  "nvidia-nvvm==13.0.88; sys_platform == 'linux'",
   "imageio[ffmpeg]>=2.35",
+  "lpips>=0.1.4",
+  "matplotlib>=3.9",
+  "transformers>=4.57,<5",
 ]
 
 [project.scripts]
@@ -47,4 +69,3 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

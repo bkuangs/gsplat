@@ -18,6 +18,8 @@ class Camera:
     width: int
     height: int
     image_path: Path | None = None
+    image_id: int | None = None
+    camera_id: int | None = None
 
     def __post_init__(self) -> None:
         if self.world_to_camera.shape != (4, 4):
@@ -36,6 +38,8 @@ class Camera:
             width=self.width,
             height=self.height,
             image_path=self.image_path,
+            image_id=self.image_id,
+            camera_id=self.camera_id,
         )
 
 
@@ -51,3 +55,5 @@ class RenderOutput:
     alpha: torch.Tensor
     depth: torch.Tensor | None = None
     radii: torch.Tensor | None = None
+    means_2d: torch.Tensor | None = None
+    visibility: torch.Tensor | None = None

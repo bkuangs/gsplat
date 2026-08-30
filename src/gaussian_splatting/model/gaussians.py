@@ -5,6 +5,37 @@ import torch
 from torch import nn
 
 
+def _local_point_spacing(points: torch.Tensor, fallback: float) -> torch.Tensor:
+    count = points.shape[0]
+    if count < 2:
+        return points.new_full((count,), fallback)
+
+    reference_count = min(count, 4096)
+    if reference_count == count:
+        references = points
+    else:
+        indices = torch.linspace(
+            0, count - 1, reference_count, device=points.device, dtype=torch.float64
+        ).round().long()
+        references = points[indices]
+
+    chunk_size = max(1, 16_000_000 // reference_count)
+    spacings: list[torch.Tensor] = []
+    epsilon = torch.finfo(points.dtype).eps
+    for chunk in points.split(chunk_size):
+        distances = torch.cdist(chunk, references)
+        distances = distances.masked_fill(distances <= epsilon, torch.inf)
+        spacings.append(distances.min(dim=1).values)
+    spacing = torch.cat(spacings)
+
+    finite = spacing[torch.isfinite(spacing)]
+    if finite.numel() == 0:
+        return points.new_full((count,), fallback)
+    typical = finite.median()
+    spacing = torch.where(torch.isfinite(spacing), spacing, typical)
+    return spacing.clamp(min=typical * 0.05, max=typical * 20.0)
+
+
 class GaussianModel(nn.Module):
     """Trainable parameterization of anisotropic 3D Gaussians using WXYZ quaternions."""
 
@@ -72,7 +103,11 @@ class GaussianModel(nn.Module):
         initial_opacity: float,
         initial_scale: float,
     ) -> "GaussianModel":
-        """Initialize Gaussian parameters from a COLMAP sparse point cloud."""
+        """Initialize Gaussians using nearest-point spacing for their isotropic scale.
+
+        ``initial_scale`` is used only when local spacing cannot be estimated, such as
+        for a one-point cloud.
+        """
         if points.ndim != 2 or points.shape[-1] != 3:
             raise ValueError("points must have shape (N, 3)")
         if colors.shape != points.shape:
@@ -87,25 +122,17 @@ class GaussianModel(nn.Module):
             raise ValueError("initial_scale must be finite and positive")
 
         count = points.shape[0]
-        means = points.detach().clone()     # .detach() -> stop gradient computation
-                                            # PyTorch treats the tensor as a fixed constant 
-                                            # rather than a variable with computational history
-
-        # Scales (size) s = (s_x, s_y​, s_z​)
-        # .full_like(a, b) -> create a new Tensor of (shape, datatype)
-        scales = torch.full_like(points, initial_scale)
+        means = points.detach().clone()
+        local_spacing = _local_point_spacing(means, initial_scale)
+        scales = local_spacing[:, None].expand_as(points).clone()
         log_scales = scales.log()
 
-        # Identity quaternions
         quaternions = points.new_zeros((count, 4))
         quaternions[:, 0] = 1.0
 
-        # Opacity alpha
-        # .new_full() -> create a new Tensor of (size, fill_value)
         opacities = points.new_full((count, 1), initial_opacity)
         opacity_logits = torch.logit(opacities)
 
-        # SH coefficients
         coefficient_count = (sh_degree + 1) ** 2
         sh_coefficients = points.new_zeros((count, coefficient_count, 3))
         colors = colors.detach().to(device=points.device, dtype=points.dtype)

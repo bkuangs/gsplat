@@ -1,6 +1,6 @@
 data:
-  colmap_dir: data/example/sparse/0
-  images_dir: data/example/images
+  colmap_dir: data/dtu/scan63/sparse/0
+  images_dir: data/dtu/scan63/images
   downscale: 1
 
 model:
@@ -25,7 +25,7 @@ training:
   seed: 42
 
 render:
-  backend: torch
+  backend: cuda
   background: [0.0, 0.0, 0.0]
 
-output_dir: outputs/baseline
+output_dir: outputs/dtu_scan63

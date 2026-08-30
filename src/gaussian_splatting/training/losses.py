@@ -78,3 +78,50 @@ def photometric_loss(
     ssim = ssim_map.mean()
 
     return (1 - ssim_weight) * l1 + ssim_weight * (1 - ssim)
+
+
+def depth_prior_loss(
+    rendered_depth: torch.Tensor,
+    alpha: torch.Tensor,
+    prior_depth: torch.Tensor,
+    prior_mask: torch.Tensor,
+    *,
+    alpha_threshold: float = 0.1,
+    beta: float = 0.1,
+) -> tuple[torch.Tensor, float]:
+    """Robustly compare expected and aligned prior depth in log space."""
+    if rendered_depth.shape != alpha.shape:
+        raise ValueError("rendered depth and alpha must have matching shapes")
+    if rendered_depth.ndim == 3 and rendered_depth.shape[0] == 1:
+        rendered_depth = rendered_depth[0]
+        alpha = alpha[0]
+    if rendered_depth.ndim != 2:
+        raise ValueError("rendered depth and alpha must have shape (H, W) or (1, H, W)")
+    if prior_depth.shape != rendered_depth.shape or prior_mask.shape != rendered_depth.shape:
+        raise ValueError("depth prior tensors must match the rendered image shape")
+    if beta <= 0:
+        raise ValueError("depth loss beta must be positive")
+    if not 0.0 <= alpha_threshold <= 1.0:
+        raise ValueError("depth alpha threshold must be between zero and one")
+
+    valid_prior = prior_mask & torch.isfinite(prior_depth) & (prior_depth > 0)
+    if not valid_prior.any():
+        raise ValueError("depth prior mask contains no finite positive values")
+    valid = (
+        valid_prior
+        & torch.isfinite(rendered_depth)
+        & (rendered_depth > 0)
+        & (alpha > alpha_threshold)
+    )
+    coverage = float(
+        valid.count_nonzero().item() / valid_prior.count_nonzero().item()
+    )
+    if not valid.any():
+        return rendered_depth.sum() * 0.0, coverage
+    residual = rendered_depth[valid].log() - prior_depth[valid].log()
+    loss = F.smooth_l1_loss(
+        residual,
+        torch.zeros_like(residual),
+        beta=beta,
+    )
+    return loss, coverage
