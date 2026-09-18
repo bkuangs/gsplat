@@ -1,37 +1,9 @@
 # Sparse-View 3D Gaussian Splatting
 
-An educational implementation of the 3D Gaussian Splatting (3DGS) pipeline, as well as a
-small extension experiment relating to sparse-view rendering. The repository includes a readable PyTorch reference
-renderer and an adapter for the optimized `gsplat` CUDA backend.
+Educational implementation of the 3D Gaussian Splatting (3DGS) pipeline with a
+small extension experiment relating to sparse-view rendering.
 
-### Learning Outcomes
-
-By completion, you should be able to:
-
-1. Explain why anisotropic Gaussians use scale plus rotation and how their covariance
-   projects through a perspective camera.
-2. Derive front-to-back alpha compositing and discuss its numerical and gradient behavior.
-3. Explain spherical harmonics as a compact view-dependent color model.
-4. Design parameter-specific optimization and adaptive clone/split/prune rules.
-5. Validate a readable reference implementation against an optimized CUDA operator.
-6. Diagnose camera-convention, coordinate-system, visibility, and numerical-stability bugs.
-
-## Layout
-
-| Theory | Implement | Scaffolded |
-| --- | --- | --- |
-| Geometry | Pinhole projection, 3D covariance, covariance projection | Camera types and validation |
-| Representation | Local-spacing initialization, SH features, parameter activations | Typed `nn.Module` parameter container |
-| Rendering | PyTorch splatting, visibility, sorting, alpha compositing, expected depth | CUDA backend adapter |
-| Learning | Photometric loss, optimizer groups, training loop | Config and checkpoint I/O |
-| Density control | Gradient statistics, clone/split/prune, optimizer-state updates | Scheduling fields and data types |
-| Data and output | COLMAP loading, image sampling, training logs | Metrics and CLI |
-
-This split is intentional. Writing another COLMAP parser, argument framework, or
-checkpoint format adds little value. Deriving covariance projection and
-debugging differentiable compositing does.
-
-## Setup
+## Bringup
 
 Use Python 3.11 and [`uv`](https://docs.astral.sh/uv/):
 
@@ -40,6 +12,20 @@ uv sync --extra dev --extra data
 uv run gsplat-learn status
 uv run pytest
 ```
+
+## Results
+
+| Scene | Test PSNR | LPIPS | Depth AbsRel |
+| --- | ---: | ---: | ---: |
+| scan63 | **+1.617 +/- 0.467 dB** | **-0.0583 +/- 0.0130** | **-0.0123 +/- 0.0052** |
+| scan24 | **+0.322 +/- 0.694 dB** | **-0.0049 +/- 0.0148** | **-0.0015 +/- 0.0006** |
+| scan110 | **+1.267 +/- 1.348 dB** | **-0.0308 +/- 0.0111** | **-0.0036 +/- 0.0009** |
+
+Across the nine comparisons, depth guidance reduced depth error every time. It also improved image quality in most runs: PSNR improved in eight of nine comparisons, while LPIPS improved in seven.
+
+![Representative held-out RGB-only and depth-guided renders](docs/assets/depth_guidance_render_comparison.png)
+
+The figure shows held-out views with PSNR improvements close to the typical result for each scene. Although depth guidance usually improves the overall image metrics, it does not improve every part of an image. For example, scan63 still shows noticeable stretching and smearing artifacts.
 
 ## Evaluation
 
@@ -177,30 +163,19 @@ uv run gsplat-learn phase6-run --scene all --condition both --seed all
 uv run gsplat-learn phase6-report
 ```
 
-The table reports the mean depth-guided effect and sample standard deviation across
-three seeds. Positive PSNR and negative LPIPS and AbsRel favor depth guidance.
-
-| Scene | Test PSNR | LPIPS | Depth AbsRel |
-| --- | ---: | ---: | ---: |
-| scan63 | **+1.617 +/- 0.467 dB** | **-0.0583 +/- 0.0130** | **-0.0123 +/- 0.0052** |
-| scan24 | **+0.322 +/- 0.694 dB** | **-0.0049 +/- 0.0148** | **-0.0015 +/- 0.0006** |
-| scan110 | **+1.267 +/- 1.348 dB** | **-0.0308 +/- 0.0111** | **-0.0036 +/- 0.0009** |
-
-Across the nine scene-seed comparisons, depth guidance improves Depth AbsRel in **9/9**
-runs, held-out PSNR in **8/9**, and LPIPS in **7/9**. Scan63 has the strongest and most
-stable benefit. Scan110 improves consistently but with variable PSNR gains. Scan24 has
-a small depth benefit and weaker, seed-sensitive appearance changes.
-
-![Representative held-out RGB-only and depth-guided renders](docs/assets/depth_guidance_render_comparison.png)
-
-The figure shows held-out views near each scene's median PSNR
-improvement. Depth guidance often improves
-the whole-image metrics, but it does not make every object region look better; scan63
-still contains strong stretching and smearing artifacts.
-
 ### Conclusion
 
 The experiment shows that aligned monocular depth
 regularization consistently improves held-out sparse-depth accuracy and usually
 improves novel-view appearance under sparse camera supervision. It does not yet
 establish better complete-surface geometry.
+
+### Learning Outcomes
+
+1. Explain why anisotropic Gaussians use scale plus rotation and how their covariance
+   projects through a perspective camera.
+2. Derive front-to-back alpha compositing and discuss its numerical and gradient behavior.
+3. Explain spherical harmonics as a compact view-dependent color model.
+4. Design parameter-specific optimization and adaptive clone/split/prune rules.
+5. Validate a readable reference implementation against an optimized CUDA operator.
+6. Diagnose camera-convention, coordinate-system, visibility, and numerical-stability bugs.
