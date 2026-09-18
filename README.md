@@ -1,7 +1,10 @@
 # Sparse-View 3D Gaussian Splatting
 
-Educational implementation of the 3D Gaussian Splatting (3DGS) pipeline with a
-small extension experiment relating to sparse-view rendering.
+Educational implementation of the 3D Gaussian Splatting (3DGS) pipeline with a small
+experiment to test whether monocular depth guidance can reduce overfitting when the
+model is trained from only a few camera views with aggressive densification. It
+compares RGB-only and depth-guided training across three DTU scenes and three random
+seeds.
 
 ## Bringup
 
