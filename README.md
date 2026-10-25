@@ -7,7 +7,7 @@ Datasets used are three [DTU](https://roboimagedata.compute.dtu.dk/) scenes: sca
 
 ## Results
 
-<img src="docs/assets/depth_guidance_render_comparison.png" alt="Representative held-out RGB-only and depth-guided renders" width="85%">
+<img src="docs/assets/depth_guidance_render_comparison.png" alt="Representative held-out RGB-only and depth-guided renders">
 
 | Scene | Test PSNR | LPIPS | Depth AbsRel |
 | --- | ---: | ---: | ---: |
